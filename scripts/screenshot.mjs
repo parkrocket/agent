@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Takes a headless screenshot of the web app and prints browser console errors.
 // Usage: node scripts/screenshot.mjs <out.png> [--url URL] [--wait ms] [--size 1280x800] [--reload]
-//        [--pin <sessionId>] [--shots N --every ms]   (shots are saved as out-1.png, out-2.png, ...)
+//        [--view lobby|<room cwd>] [--shots N --every ms]   (shots are saved as out-1.png, out-2.png, ...)
 import { chromium } from "playwright";
 
 const args = process.argv.slice(2);
@@ -17,14 +17,14 @@ if (!out) {
 const url = opt("url", "http://localhost:7421/");
 const wait = Number(opt("wait", "1500"));
 const [width, height] = opt("size", "1280x800").split("x").map(Number);
-const pin = opt("pin", "");
+const view = opt("view", "");
 const shots = Number(opt("shots", "1"));
 const every = Number(opt("every", "1000"));
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width, height } });
-// Pin the session picker so other sessions' events don't switch the view.
-if (pin) await page.addInitScript((id) => localStorage.setItem("ai-office.session", id), pin);
+// Fix the view (lobby or one room) so other sessions' events don't switch it.
+if (view) await page.addInitScript((v) => localStorage.setItem("ai-office.view", v), view);
 page.on("console", (m) => {
   if (m.type() === "error" || m.type() === "warning") console.log(`[console.${m.type()}] ${m.text()}`);
 });

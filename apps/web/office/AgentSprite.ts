@@ -46,6 +46,8 @@ export class AgentSprite {
   /** Where this agent belongs (seat or standing spot). */
   home: Point;
   seatedAtDesk: boolean;
+  /** "pod:desk" of the desk this agent sits at, if any (set by the room). */
+  deskKey?: string;
   private path: Point[] = [];
   private mode: Mode;
 
@@ -54,6 +56,7 @@ export class AgentSprite {
     home: Point,
     seatedAtDesk: boolean,
     walkIn: boolean,
+    displayName: string,
     private readonly world: Container,
     private readonly ui: Container,
   ) {
@@ -71,7 +74,7 @@ export class AgentSprite {
 
     const labelStyle = { fontFamily: "ui-sans-serif, system-ui, 'Nanum Gothic', sans-serif", fontSize: 11 };
     this.name = new Text({
-      text: agent.kind === "main" ? "팀장" : (agent.type ?? "직원"),
+      text: displayName,
       style: { ...labelStyle, fill: agent.kind === "main" ? 0xffe08a : 0xe8ecf4, fontWeight: "bold" },
       resolution: 2,
     });
@@ -114,7 +117,8 @@ export class AgentSprite {
     this.mode = "leaving";
   }
 
-  update(dtMs: number, now: number, toScreen: (p: Point) => Point, scale: number, deskFront?: number) {
+  /** `detail` false (small lobby view) hides bubbles and name labels; "!" and "z" stay. */
+  update(dtMs: number, now: number, toScreen: (p: Point) => Point, scale: number, detail: boolean, deskFront?: number) {
     const walking = this.step(dtMs);
     const status = visualStatus(this.agent, now);
     const seated = this.mode === "seated" && this.seatedAtDesk;
@@ -135,7 +139,7 @@ export class AgentSprite {
 
     const headScreen = toScreen({ x: head.x, y: head.y - (waiting ? 12 : 1) });
     const showUi = !this.leaving;
-    this.bubble.set(showUi && !walking ? bubbleText(this.agent, status, now) : undefined, status);
+    this.bubble.set(showUi && detail && !walking ? bubbleText(this.agent, status, now) : undefined, status);
     this.bubble.position.set(Math.round(headScreen.x), Math.round(headScreen.y));
     // Text is drawn unscaled for crispness, but shrinks with the room on small screens.
     const textScale = Math.max(0.7, Math.min(1, scale / 2.5));
@@ -144,7 +148,7 @@ export class AgentSprite {
 
     const nameAt = toScreen(seated && deskFront !== undefined ? { x: this.pos.x, y: deskFront + 1 } : { x: this.pos.x, y: this.pos.y + 1 });
     this.name.position.set(Math.round(nameAt.x), Math.round(nameAt.y));
-    this.name.visible = showUi;
+    this.name.visible = showUi && detail;
 
     const sleeping = status === "idle" && !walking && showUi;
     this.zzz.visible = sleeping;

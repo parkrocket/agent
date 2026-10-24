@@ -1,16 +1,27 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MAX_RECENT_EVENTS, type OfficeEvent, type ServerMessage, type SessionMap } from "@ai-office/shared";
+import {
+  MAX_RECENT_EVENTS,
+  type OfficeConfig,
+  type OfficeEvent,
+  type RoomMap,
+  type ServerMessage,
+  type SessionMap,
+} from "@ai-office/shared";
 
 export const WS_URL = process.env.NEXT_PUBLIC_AI_OFFICE_WS ?? "ws://localhost:7420/ws";
 
 export type ConnectionStatus = "connecting" | "open" | "closed";
 
-/** One WebSocket connection shared by the office canvas and the log panel. */
+/** One WebSocket connection shared by the office canvas, tabs, alerts and the log. */
 export function useOfficeSocket() {
   const [events, setEvents] = useState<OfficeEvent[]>([]);
   const [sessions, setSessions] = useState<SessionMap>({});
+  const [rooms, setRooms] = useState<RoomMap>({});
+  const [config, setConfig] = useState<OfficeConfig | undefined>();
+  /** True once the first snapshot arrived (alerts use it to skip already-waiting agents). */
+  const [loaded, setLoaded] = useState(false);
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
 
   useEffect(() => {
@@ -34,14 +45,25 @@ export function useOfficeSocket() {
           console.warn("[ai-office] ignoring malformed WebSocket message", err);
           return;
         }
-        if (data?.type === "snapshot") {
-          setEvents(data.events.slice(-MAX_RECENT_EVENTS));
-          setSessions(data.sessions);
-        } else if (data?.type === "event") {
-          setEvents((prev) => [...prev, data.event].slice(-MAX_RECENT_EVENTS));
-          setSessions((prev) => ({ ...prev, [data.session.sessionId]: data.session }));
-        } else {
-          console.warn("[ai-office] ignoring unknown WebSocket message", data);
+        switch (data?.type) {
+          case "snapshot":
+            setEvents(data.events.slice(-MAX_RECENT_EVENTS));
+            setSessions(data.sessions);
+            setRooms(data.rooms);
+            setConfig(data.config);
+            setLoaded(true);
+            break;
+          case "event":
+            setEvents((prev) => [...prev, data.event].slice(-MAX_RECENT_EVENTS));
+            setSessions((prev) => ({ ...prev, [data.session.sessionId]: data.session }));
+            setRooms((prev) => ({ ...prev, [data.room.key]: data.room }));
+            break;
+          case "state":
+            setSessions(data.sessions);
+            setRooms(data.rooms);
+            break;
+          default:
+            console.warn("[ai-office] ignoring unknown WebSocket message", data);
         }
       };
       // The browser always fires close after error, and onclose handles the reconnect.
@@ -63,5 +85,5 @@ export function useOfficeSocket() {
     };
   }, []);
 
-  return { events, sessions, status, clearEvents: () => setEvents([]) };
+  return { events, sessions, rooms, config, loaded, status, clearEvents: () => setEvents([]) };
 }

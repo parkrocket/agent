@@ -1,7 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { OfficeEvent } from "./events";
-import { MAX_SESSIONS, SUB_DESK_COUNT, reduceSession, reduceSessions, type SessionState } from "./office";
+import {
+  EMPTY_OFFICE,
+  compactPods,
+  MAX_SESSIONS,
+  SUB_DESK_COUNT,
+  reduceOffice,
+  reduceSession,
+  roomActivity,
+  roomLabels,
+  sweepOffDuty,
+  type OfficeState,
+  type SessionState,
+} from "./office";
 
 let clock = 1000;
 type Extra = Partial<Omit<OfficeEvent, "event" | "agent">> & { sub?: string; subType?: string };
@@ -207,13 +219,144 @@ test("reducer does not mutate the previous state", () => {
   assert.deepEqual(s1, frozen);
 });
 
-test("reduceSessions keeps sessions apart and caps the count (for the session picker)", () => {
-  let map = reduceSessions({}, ev("UserPromptSubmit"));
-  map = reduceSessions(map, { ...ev("PreToolUse", { tool: "Read", toolUseId: "x" }), sessionId: "s2" });
-  assert.equal(map.s1!.agents.main!.status, "thinking");
-  assert.equal(map.s2!.agents.main!.status, "reading");
+// ------------------------------------------------------------------ rooms
 
-  for (let i = 0; i < MAX_SESSIONS + 5; i++) map = reduceSessions(map, { ...ev("UserPromptSubmit"), sessionId: `n${i}` });
-  assert.equal(Object.keys(map).length, MAX_SESSIONS);
-  assert.ok(!map.s1, "oldest sessions are dropped first");
+function office(...events: OfficeEvent[]): OfficeState {
+  return events.reduce((st, e) => reduceOffice(st, e).state, EMPTY_OFFICE);
+}
+const at = (e: OfficeEvent, sessionId: string, cwd: string) => ({
+  ...e,
+  sessionId,
+  cwd,
+  project: cwd.split("/").at(-1)!,
+});
+
+test("sessions in the same cwd share a room, each with its own pod", () => {
+  const st = office(
+    at(ev("UserPromptSubmit"), "a", "/p/shop"),
+    at(ev("UserPromptSubmit"), "b", "/p/shop"),
+    at(ev("UserPromptSubmit"), "c", "/p/api"),
+  );
+  assert.deepEqual(Object.keys(st.rooms).sort(), ["/p/api", "/p/shop"]);
+  assert.deepEqual(st.rooms["/p/shop"]!.pods, ["a", "b"]);
+  assert.deepEqual(st.rooms["/p/api"]!.pods, ["c"]);
+});
+
+test("a session keeps its room even if its cwd changes later", () => {
+  const st = office(at(ev("UserPromptSubmit"), "a", "/p/shop"), at(ev("PreToolUse", { tool: "Read", toolUseId: "t" }), "a", "/p/shop/sub"));
+  assert.deepEqual(Object.keys(st.rooms), ["/p/shop"]);
+  assert.equal(st.sessions.a!.room, "/p/shop");
+  assert.equal(st.sessions.a!.cwd, "/p/shop/sub");
+});
+
+test("pods are stable: a freed pod leaves a hole that the next session fills", () => {
+  let st = office(
+    at(ev("UserPromptSubmit"), "a", "/p/shop"),
+    at(ev("UserPromptSubmit"), "b", "/p/shop"),
+    at(ev("UserPromptSubmit"), "c", "/p/shop"),
+  );
+  st = reduceOffice(st, at(ev("SessionEnd"), "a", "/p/shop")).state;
+  assert.deepEqual(st.rooms["/p/shop"]!.pods, [null, "b", "c"], "b and c keep their pods");
+  st = reduceOffice(st, at(ev("UserPromptSubmit"), "d", "/p/shop")).state;
+  assert.deepEqual(st.rooms["/p/shop"]!.pods, ["d", "b", "c"]);
+  st = reduceOffice(st, at(ev("SessionEnd"), "c", "/p/shop")).state;
+  assert.deepEqual(st.rooms["/p/shop"]!.pods, ["d", "b"], "trailing holes are trimmed");
+});
+
+test("compactPods closes holes (used once at boot) without touching sessions", () => {
+  let st = office(at(ev("UserPromptSubmit"), "a", "/p/shop"), at(ev("UserPromptSubmit"), "b", "/p/shop"));
+  st = reduceOffice(st, at(ev("SessionEnd"), "a", "/p/shop")).state;
+  const compact = compactPods(st);
+  assert.deepEqual(compact.rooms["/p/shop"]!.pods, ["b"]);
+  assert.deepEqual(st.rooms["/p/shop"]!.pods, [null, "b"], "input is not mutated");
+  assert.equal(compact.sessions, st.sessions);
+});
+
+test("SessionEnd sends the session home at once", () => {
+  const st = office(at(ev("UserPromptSubmit"), "a", "/p/shop"), at(ev("SessionEnd"), "a", "/p/shop"));
+  assert.equal(st.sessions.a!.offDuty, true);
+  assert.equal(roomActivity(st.rooms["/p/shop"]!, st.sessions), "empty");
+});
+
+test("off duty after the configured idle time; back to work on the next event", () => {
+  const OFF = 10 * 60_000;
+  let st = office(at(ev("UserPromptSubmit"), "a", "/p/shop"), at(ev("Stop"), "a", "/p/shop"));
+  const last = st.sessions.a!.lastEventAt;
+
+  assert.equal(sweepOffDuty(st, last + OFF - 1, OFF), st, "unchanged state is returned as-is");
+  st = sweepOffDuty(st, last + OFF, OFF);
+  assert.equal(st.sessions.a!.offDuty, true);
+  assert.deepEqual(st.rooms["/p/shop"]!.pods, []);
+  assert.equal(roomActivity(st.rooms["/p/shop"]!, st.sessions), "empty");
+
+  const custom = sweepOffDuty(office(at(ev("UserPromptSubmit"), "x", "/p/q")), clock + 30_001, 30_000);
+  assert.equal(custom.sessions.x!.offDuty, true, "the threshold comes from the caller");
+
+  st = reduceOffice(st, at(ev("UserPromptSubmit"), "a", "/p/shop")).state;
+  assert.equal(st.sessions.a!.offDuty, false);
+  assert.deepEqual(st.rooms["/p/shop"]!.pods, ["a"]);
+});
+
+test("a session waiting for permission is not sent home; one idle at the prompt is", () => {
+  const OFF = 60_000;
+  const blocked = office(
+    at(ev("UserPromptSubmit"), "a", "/p/shop"),
+    at(ev("PermissionRequest", { tool: "Bash" }), "a", "/p/shop"),
+  );
+  assert.equal(sweepOffDuty(blocked, clock + OFF * 5, OFF).sessions.a!.offDuty, false);
+
+  const idle = office(
+    at(ev("Stop"), "b", "/p/shop"),
+    at(ev("Notification", { detail: { notificationType: "idle_prompt" } }), "b", "/p/shop"),
+  );
+  assert.equal(sweepOffDuty(idle, clock + OFF * 5, OFF).sessions.b!.offDuty, true);
+});
+
+test("room with every session off duty is empty; others keep working", () => {
+  let st = office(
+    at(ev("UserPromptSubmit"), "a", "/p/shop"),
+    at(ev("UserPromptSubmit"), "b", "/p/shop"),
+  );
+  st = reduceOffice(st, at(ev("PreToolUse", { tool: "Edit", toolUseId: "t" }), "b", "/p/shop")).state;
+  st = reduceOffice(st, at(ev("SessionEnd"), "a", "/p/shop")).state;
+  assert.equal(roomActivity(st.rooms["/p/shop"]!, st.sessions), "working");
+  st = reduceOffice(st, at(ev("SessionEnd"), "b", "/p/shop")).state;
+  assert.equal(roomActivity(st.rooms["/p/shop"]!, st.sessions), "empty");
+});
+
+test("roomActivity: waiting beats working beats idle", () => {
+  let st = office(at(ev("SessionStart"), "a", "/p/shop"), at(ev("SessionStart"), "b", "/p/shop"));
+  assert.equal(roomActivity(st.rooms["/p/shop"]!, st.sessions), "idle");
+  st = reduceOffice(st, at(ev("PreToolUse", { tool: "Read", toolUseId: "t" }), "a", "/p/shop")).state;
+  assert.equal(roomActivity(st.rooms["/p/shop"]!, st.sessions), "working");
+  st = reduceOffice(st, at(ev("PermissionRequest", { tool: "Bash" }), "b", "/p/shop")).state;
+  assert.equal(roomActivity(st.rooms["/p/shop"]!, st.sessions), "waiting");
+});
+
+test("roomLabels disambiguates rooms with the same directory name", () => {
+  const st = office(
+    at(ev("UserPromptSubmit"), "a", "/home/u/work/agent"),
+    at(ev("UserPromptSubmit"), "b", "/home/u/play/agent"),
+    at(ev("UserPromptSubmit"), "c", "/home/u/shop"),
+  );
+  assert.deepEqual(roomLabels(Object.values(st.rooms)), {
+    "/home/u/work/agent": "work/agent",
+    "/home/u/play/agent": "play/agent",
+    "/home/u/shop": "shop",
+  });
+});
+
+test("reduceOffice caps sessions, dropping off-duty ones first, and is pure", () => {
+  let st = office(at(ev("UserPromptSubmit"), "keep", "/p/a"));
+  st = reduceOffice(st, at(ev("SessionEnd"), "gone", "/p/old")).state;
+  // keep + gone + (MAX_SESSIONS - 2) = MAX_SESSIONS; one more forces exactly one drop
+  for (let i = 0; i < MAX_SESSIONS - 2; i++) st = reduceOffice(st, at(ev("UserPromptSubmit"), `n${i}`, "/p/a")).state;
+  const before = structuredClone(st);
+  const { state, pruned } = reduceOffice(st, at(ev("UserPromptSubmit"), "new", "/p/a"));
+  assert.equal(pruned, true);
+  assert.equal(Object.keys(state.sessions).length, MAX_SESSIONS);
+  assert.ok(!state.sessions.gone, "the off-duty session goes first");
+  assert.ok(state.sessions.keep, "an older but present session stays");
+  assert.ok(!state.rooms["/p/old"], "a room with no sessions left is removed");
+  assert.deepEqual(st, before, "previous state is not mutated");
 });

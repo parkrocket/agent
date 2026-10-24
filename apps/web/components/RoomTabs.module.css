@@ -1,0 +1,19 @@
+.tabs { display: flex; gap: 6px; overflow-x: auto; min-width: 0; flex: 1 1 auto; scrollbar-width: thin; padding: 2px 0; }
+.tab {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  background: #1a1e28; color: var(--muted); border: 1px solid #2f3544; border-radius: 6px;
+  padding: 3px 10px; font: inherit; cursor: pointer; white-space: nowrap;
+}
+.tab:hover { border-color: #4c566a; }
+.selected { background: #2b3242; color: var(--fg); border-color: var(--accent); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #5c6475; }
+.count { font-size: 11px; background: #3b4252; color: var(--fg); border-radius: 8px; padding: 0 5px; }
+/* rooms with someone at work stand out; empty rooms recede */
+.working, .waiting { color: var(--fg); border-color: #3f4a5e; }
+.working .dot { background: #8fd18b; }
+.idle .dot { background: #9aa0ab; }
+.empty { opacity: 0.5; }
+.waiting { border-color: #c2453d; }
+.waiting .dot { background: #ff6b5e; animation: blink 1s steps(2, start) infinite; }
+@keyframes blink { to { visibility: hidden; } }
+@media (prefers-reduced-motion: reduce) { .waiting .dot { animation: none; } }

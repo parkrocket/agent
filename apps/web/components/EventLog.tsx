@@ -7,19 +7,22 @@ import styles from "./EventLog.module.css";
 
 export function EventLog({
   events,
-  currentSessionId,
+  scopeLabel,
+  inScope,
   onClear,
   emptyText,
 }: {
   events: OfficeEvent[];
-  currentSessionId?: string;
+  /** Label for the "only this room" filter; omitted in the lobby, where there's no single room. */
+  scopeLabel?: string;
+  inScope?: (e: OfficeEvent) => boolean;
   onClear: () => void;
   emptyText: string;
 }) {
   const [autoScroll, setAutoScroll] = useState(true);
-  const [onlyCurrent, setOnlyCurrent] = useState(false);
+  const [onlyScope, setOnlyScope] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
-  const shown = onlyCurrent && currentSessionId ? events.filter((e) => e.sessionId === currentSessionId) : events;
+  const shown = onlyScope && inScope ? events.filter(inScope) : events;
 
   useEffect(() => {
     const el = logRef.current;
@@ -30,10 +33,12 @@ export function EventLog({
     <section className={styles.root}>
       <header className={styles.header}>
         <h2>이벤트 로그</h2>
-        <label className={styles.toggle}>
-          <input type="checkbox" checked={onlyCurrent} onChange={(e) => setOnlyCurrent(e.target.checked)} />
-          현재 세션만
-        </label>
+        {scopeLabel && (
+          <label className={styles.toggle}>
+            <input type="checkbox" checked={onlyScope} onChange={(e) => setOnlyScope(e.target.checked)} />
+            {scopeLabel}
+          </label>
+        )}
         <label className={styles.toggle}>
           <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} />
           자동 스크롤
@@ -50,7 +55,7 @@ export function EventLog({
               needsAttention(e) ? styles.attention : "",
               e.event === "PostToolUseFailure" ? styles.failure : "",
               e.agent.kind === "sub" ? styles.sub : "",
-              e.sessionId === currentSessionId ? "" : styles.otherSession,
+              !inScope || inScope(e) ? "" : styles.otherSession,
             ].join(" ")}
           >
             <span className={styles.time}>{formatTime(e.ts)}</span>

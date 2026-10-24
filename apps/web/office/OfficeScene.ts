@@ -1,42 +1,34 @@
-import { Application, Container, Sprite, Text } from "pixi.js";
-import type { AgentStatus, SessionState } from "@ai-office/shared";
-import { AgentSprite } from "./AgentSprite";
-import { visualStatus } from "./status";
-import { LEAD_DESK, SUB_DESKS, deskSpot, standingSpot, type DeskSpot, type Point } from "./layout";
-import { ROOM_H, ROOM_W, chairTexture, deskTextures, monitorTexture, roomTexture, type ScreenMode } from "./sprites";
+import { Application, Container, Text } from "pixi.js";
+import { RoomView, type RoomInput } from "./RoomView";
 
-interface DeskView {
-  spot: DeskSpot;
-  monitor: Sprite;
-  front: number;
+export type SceneMode = "lobby" | "focus";
+
+export interface SceneInput {
+  /** Every room (kept alive so characters keep walking), in display order. */
+  rooms: RoomInput[];
+  /** Keys of the rooms to show: all lobby rooms, or just the focused one. */
+  visible: string[];
+  mode: SceneMode;
 }
 
-const SCREEN: Record<AgentStatus, ScreenMode> = {
-  idle: "idle",
-  thinking: "thinking",
-  reading: "reading",
-  writing: "writing",
-  running: "running",
-  waiting: "waiting",
-  done: "idle",
-};
+const GAP = 16;
+const TITLE_H = 22;
 
-/** The office: a scaled pixel "world" layer plus an unscaled UI layer for text. */
+/** All rooms in one Pixi app: a lobby grid, or one focused room filling the canvas. */
 export class OfficeScene {
-  private readonly world = new Container({ sortableChildren: true });
+  private readonly roomLayer = new Container();
   private readonly ui = new Container();
-  private readonly desks = new Map<number, DeskView>();
-  private readonly agents = new Map<string, AgentSprite>();
-  private readonly leaving = new Set<AgentSprite>();
+  private readonly rooms = new Map<string, RoomView>();
   private readonly overlay: Text;
-  private sessionId: string | undefined;
-  private scale = 1;
+  private input: SceneInput = { rooms: [], visible: [], mode: "lobby" };
+  private initialized = false;
+  private detail = true;
 
-  private constructor(private readonly app: Application) {
-    app.stage.addChild(this.world, this.ui);
-    this.world.addChild(new Sprite(roomTexture()));
-    for (const spot of [LEAD_DESK, ...SUB_DESKS]) this.addDesk(spot);
-
+  private constructor(
+    private readonly app: Application,
+    private readonly onOpenRoom: (key: string) => void,
+  ) {
+    app.stage.addChild(this.roomLayer, this.ui);
     this.overlay = new Text({
       text: "",
       style: { fontFamily: "ui-sans-serif, system-ui, 'Nanum Gothic', sans-serif", fontSize: 14, fill: 0xffffff },
@@ -44,13 +36,11 @@ export class OfficeScene {
     });
     this.overlay.anchor.set(0.5);
     this.ui.addChild(this.overlay);
-
     app.renderer.on("resize", () => this.layout());
-    this.layout();
     app.ticker.add((t) => this.tick(t.deltaMS));
   }
 
-  static async create(host: HTMLElement): Promise<OfficeScene> {
+  static async create(host: HTMLElement, onOpenRoom: (key: string) => void): Promise<OfficeScene> {
     const app = new Application();
     await app.init({
       resizeTo: host,
@@ -61,113 +51,96 @@ export class OfficeScene {
       resolution: globalThis.devicePixelRatio ?? 1,
     });
     host.appendChild(app.canvas);
-    return new OfficeScene(app);
+    return new OfficeScene(app, onOpenRoom);
   }
 
-  private addDesk(spot: DeskSpot) {
-    const textures = deskTextures();
-    const chair = new Sprite(chairTexture(spot.lead));
-    chair.anchor.set(0.5, 1);
-    // Top of the chair back sits at shoulder height of the seated character.
-    chair.position.set(spot.seat.x, spot.seat.y - 2);
-    chair.zIndex = spot.seat.y - 20;
-
-    const desk = new Sprite(spot.lead ? textures.lead : textures.sub);
-    desk.position.set(spot.desk.x - 1, spot.desk.y - 1);
-    const front = spot.desk.y + spot.h;
-    desk.zIndex = front;
-
-    const monitor = new Sprite(monitorTexture("off", 0));
-    monitor.position.set(spot.monitor.x, spot.monitor.y);
-    monitor.zIndex = front + 1;
-
-    this.world.addChild(chair, desk, monitor);
-    this.desks.set(spot.index, { spot, monitor, front });
+  sync(input: SceneInput) {
+    this.input = input;
+    const keys = new Set(input.rooms.map((r) => r.room.key));
+    for (const [key, view] of this.rooms) {
+      if (keys.has(key)) continue;
+      view.destroy();
+      this.rooms.delete(key);
+    }
+    for (const r of input.rooms) {
+      let view = this.rooms.get(r.room.key);
+      if (!view) {
+        view = new RoomView(r.room.key, this.onOpenRoom);
+        this.rooms.set(r.room.key, view);
+        this.roomLayer.addChild(view.world);
+        this.ui.addChild(view.ui);
+      }
+      // Everyone present on the first paint starts seated; anyone appearing later walks in.
+      view.sync(r, !this.initialized);
+    }
+    this.initialized = true;
+    this.overlay.text = input.rooms.length ? "" : "Claude Code 세션을 기다리는 중…";
+    this.layout();
   }
 
   private layout() {
     const { width, height } = this.app.screen;
-    const fit = Math.min(width / ROOM_W, height / ROOM_H);
-    // Integer scaling keeps pixels square; fall back to fractional on tiny screens.
-    this.scale = fit >= 1 ? Math.floor(fit) : fit;
-    this.world.scale.set(this.scale);
-    this.world.position.set(
-      Math.round((width - ROOM_W * this.scale) / 2),
-      Math.round((height - ROOM_H * this.scale) / 2),
+    this.overlay.position.set(width / 2, height / 2);
+    const visible = this.input.visible.flatMap((k) => this.rooms.get(k) ?? []);
+    for (const view of this.rooms.values()) view.visible = false;
+    if (!visible.length) return;
+
+    const lobby = this.input.mode === "lobby";
+    const titleH = lobby ? TITLE_H : 0;
+    const { cols, scale } = bestGrid(
+      visible.map((v) => v.size),
+      width,
+      height,
+      titleH,
     );
-    this.overlay.position.set(width / 2, this.world.y + 14 * this.scale);
-  }
+    // Lobby bubbles only make sense when rooms are drawn large enough to read.
+    this.detail = !lobby || scale >= 1.5;
 
-  private toScreen = (p: Point): Point => ({
-    x: this.world.x + p.x * this.scale,
-    y: this.world.y + p.y * this.scale,
-  });
-
-  /** Reconciles the scene with the server's session state. */
-  sync(session: SessionState | undefined) {
-    const switched = session?.sessionId !== this.sessionId;
-    this.sessionId = session?.sessionId;
-    if (switched) {
-      for (const a of this.agents.values()) a.destroy();
-      this.agents.clear();
-      for (const a of this.leaving) a.destroy();
-      this.leaving.clear();
-    }
-
-    this.overlay.text = !session
-      ? "Claude Code 세션을 기다리는 중…"
-      : session.ended
-        ? "세션 종료됨"
-        : "";
-
-    const agents = session ? Object.values(session.agents) : [];
-    let standing = 0;
-    for (const agent of agents) {
-      const spot = deskSpot(agent.desk);
-      const home = spot ? spot.seat : standingSpot(standing++);
-      const existing = this.agents.get(agent.key);
-      if (existing) {
-        existing.agent = agent;
-        existing.moveHome(home, !!spot);
-      } else {
-        // Staff appearing live walk in; anything present on first paint is already seated.
-        const walkIn = !switched && agent.kind === "sub";
-        this.agents.set(agent.key, new AgentSprite(agent, home, !!spot, walkIn, this.world, this.ui));
-      }
-    }
-    const present = new Set(agents.map((a) => a.key));
-    for (const [key, sprite] of this.agents) {
-      if (present.has(key)) continue;
-      sprite.leave();
-      this.agents.delete(key);
-      this.leaving.add(sprite);
-    }
+    const rows = Math.ceil(visible.length / cols);
+    const cellW = (width - GAP * (cols + 1)) / cols;
+    const cellH = (height - GAP * (rows + 1)) / rows;
+    visible.forEach((view, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const w = view.size.w * scale;
+      const h = view.size.h * scale + titleH;
+      const x = GAP + col * (cellW + GAP) + (cellW - w) / 2;
+      const y = GAP + row * (cellH + GAP) + (cellH - h) / 2 + titleH;
+      view.visible = true;
+      view.layout(x, y, scale, lobby, lobby);
+    });
   }
 
   private tick(dtMs: number) {
     const now = Date.now();
     const frame = Math.floor(now / 250);
-    const occupied = new Map<number, AgentSprite>();
-    for (const a of this.agents.values()) if (a.agent.desk >= 0) occupied.set(a.agent.desk, a);
-
-    for (const [index, desk] of this.desks) {
-      const a = occupied.get(index);
-      const mode: ScreenMode = a ? SCREEN[visualStatus(a.agent, now)] : "off";
-      desk.monitor.texture = monitorTexture(mode, frame);
-    }
-    for (const a of this.agents.values()) {
-      a.update(dtMs, now, this.toScreen, this.scale, this.desks.get(a.agent.desk)?.front);
-    }
-    for (const a of this.leaving) {
-      a.update(dtMs, now, this.toScreen, this.scale);
-      if (a.done) {
-        a.destroy();
-        this.leaving.delete(a);
-      }
-    }
+    for (const view of this.rooms.values()) view.tick(dtMs, now, frame, this.detail);
   }
 
   destroy() {
     this.app.destroy(true, { children: true });
   }
+}
+
+/**
+ * Column count that lets every room be drawn largest, with one shared scale so
+ * characters are the same size everywhere. Ties go to more columns (side by side).
+ */
+function bestGrid(sizes: { w: number; h: number }[], width: number, height: number, titleH: number) {
+  let best = { cols: 1, scale: 0 };
+  for (let cols = 1; cols <= sizes.length; cols++) {
+    const rows = Math.ceil(sizes.length / cols);
+    const cellW = (width - GAP * (cols + 1)) / cols;
+    const cellH = (height - GAP * (rows + 1)) / rows - titleH;
+    const scale = snapScale(Math.min(...sizes.map((s) => Math.min(cellW / s.w, cellH / s.h))));
+    if (scale >= best.scale) best = { cols, scale };
+  }
+  return best;
+}
+
+/** Whole numbers from 2× up keep pixels square; quarter steps between 1× and 2× trade a little evenness for size. */
+function snapScale(fit: number): number {
+  if (fit >= 2) return Math.floor(fit);
+  if (fit >= 1) return Math.floor(fit * 4) / 4;
+  return Math.max(0.25, fit);
 }
