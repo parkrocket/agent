@@ -3,7 +3,8 @@
   display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
   padding: 6px 0; border-bottom: 1px solid #2a2f3a;
 }
-.header h2 { font-size: 13px; margin: 0; margin-right: auto; color: var(--muted); }
+.header h2 { font-size: 13px; margin: 0; color: var(--muted); }
+.header h2 + button { margin-right: auto; }
 .header button {
   background: #222733; color: var(--fg); border: 1px solid #3b4252;
   border-radius: 4px; padding: 1px 10px; font: inherit; cursor: pointer;

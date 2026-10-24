@@ -2,6 +2,7 @@
 // Takes a headless screenshot of the web app and prints browser console errors.
 // Usage: node scripts/screenshot.mjs <out.png> [--url URL] [--wait ms] [--size 1280x800] [--reload]
 //        [--view lobby|<room cwd>] [--shots N --every ms]   (shots are saved as out-1.png, out-2.png, ...)
+//        [--ls key=value ...] (preset localStorage, e.g. --ls ai-office.log=collapsed) [--scale 2]
 import { chromium } from "playwright";
 
 const args = process.argv.slice(2);
@@ -22,7 +23,9 @@ const shots = Number(opt("shots", "1"));
 const every = Number(opt("every", "1000"));
 
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width, height } });
+const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: Number(opt("scale", "1")) });
+const presets = args.flatMap((a, i) => (args[i - 1] === "--ls" ? [a.split("=")] : []));
+if (presets.length) await page.addInitScript((kv) => kv.forEach(([k, v]) => localStorage.setItem(k, v)), presets);
 // Fix the view (lobby or one room) so other sessions' events don't switch it.
 if (view) await page.addInitScript((v) => localStorage.setItem("ai-office.view", v), view);
 page.on("console", (m) => {

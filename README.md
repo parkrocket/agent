@@ -14,7 +14,7 @@ Claude Code hook ──POST /events──▶ apps/server (Fastify :7420) ──W
 |---|---|
 | `packages/shared` | `OfficeEvent` 타입·zod 스키마, 상태 reducer(`office.ts`), WS 프로토콜 |
 | `apps/server` | 이벤트 수신·SQLite 저장, 방/세션 상태 관리, 퇴근 처리, WebSocket 브로드캐스트 |
-| `apps/web` | PixiJS 픽셀 사무실(로비/집중 보기), 방 탭, 승인 대기 알림, 이벤트 로그 |
+| `apps/web` | Three.js 3D 사무실(로비/집중 보기), 방 탭, 승인 대기 알림, 이벤트 로그 |
 | `hooks/` | Claude Code hook 스크립트 (의존성 없음) |
 | `scripts/` | hook 설치/제거, 시뮬레이터(`simulate.mjs`), 스크린샷(`screenshot.mjs`) |
 
@@ -51,15 +51,22 @@ node scripts/simulate.mjs --projects 3 --sessions 2
 
 | 상태 | 언제 | 화면 |
 |---|---|---|
-| 휴식 | 세션 시작 직후, 완료 후 30초 지남 | 졸면서 z |
+| 휴식 | 세션 시작 직후, 완료 후 30초 지남 | 고개 숙여 졸며 z, 회색 링 |
 | 생각 중 | 요청을 받았거나 도구 사이 | 말풍선 "…" |
-| 읽는 중 | Read / Grep / Glob / WebFetch / WebSearch | 고개 숙임, 파란 화면 |
-| 작성 중 | Edit / Write / NotebookEdit | 타이핑, 노란 화면 |
-| 실행 중 | Bash | 타이핑, 초록 터미널 |
-| 손 듦 | 권한 요청, 입력 대기 알림 | 손 들기 + "!" + 승인 대기 말풍선 |
-| 완료 | Stop | 기지개, "완료!" |
+| 읽는 중 | Read / Grep / Glob / WebFetch / WebSearch | 고개 숙임, 파란 화면, 파란 링 |
+| 작성 중 | Edit / Write / NotebookEdit | 타이핑, 노란 화면, 노란 링 |
+| 실행 중 | Bash | 타이핑, 초록 터미널, 초록 링 |
+| 손 듦 | 권한 요청, 입력 대기 알림 | 손 들기 + "!" + 승인 대기 말풍선, 깜빡이는 빨간 링 |
+| 완료 | Stop | 끄덕이며 "완료!", 보라 링 |
 
-에셋(캐릭터·가구·방)은 모두 코드로 직접 그린 픽셀 아트라 외부 이미지·폰트가 없습니다.
+## 에셋
+
+3D 모델은 [Kenney](https://kenney.nl)의 CC0(퍼블릭 도메인) 에셋을 씁니다. 각 폴더에 원본 `License.txt`가 들어 있습니다.
+
+- [Furniture Kit](https://kenney.nl/assets/furniture-kit): 책상, 의자, 모니터, 벽, 문, 창문, 소품 (`apps/web/public/assets/kenney/furniture/`)
+- [Mini Characters](https://kenney.nl/assets/mini-characters): 팀장·직원 캐릭터와 애니메이션 (`apps/web/public/assets/kenney/characters/`)
+
+바닥 무늬와 모니터 화면은 코드로 그립니다.
 
 ## hook 설치 / 제거
 

@@ -1,8 +1,10 @@
-import { Container, Graphics, Rectangle, Sprite, Text } from "pixi.js";
-import type { AgentStatus, RoomActivity, RoomState, SessionMap } from "@ai-office/shared";
-import { AgentSprite } from "./AgentSprite";
-import { podDesks, podOrigin, roomSize, standingSpot, type DeskSpot, type Point } from "./layout";
-import { chairTexture, deskTextures, monitorTexture, roomTexture, type ScreenMode } from "./sprites";
+import * as THREE from "three";
+import { CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
+import type { RoomActivity, RoomState, SessionMap } from "@ai-office/shared";
+import { Agent } from "./Agent";
+import { CHARACTERS, cloneFurniture, type Assets, type CharacterName, type FurnitureName } from "./assets";
+import { DOOR_TILE_Z, podDesks, podOrigin, roomSize, standingSpot, type DeskSpot } from "./layout";
+import { SCREEN_MODE, screenMaterial } from "./screens";
 import { visualStatus } from "./status";
 
 export interface RoomInput {
@@ -12,74 +14,118 @@ export interface RoomInput {
   activity: RoomActivity;
 }
 
-interface DeskView {
-  spot: DeskSpot;
-  monitor: Sprite;
-  front: number;
+/**
+ * Extra rotation per model so that, after it, every model "faces" +z (its
+ * front, a chair's seat opening, a screen's display) in its own frame.
+ */
+const FACING: Partial<Record<FurnitureName, number>> = {
+  desk: 0,
+  chairDesk: Math.PI,
+  computerScreen: 0,
+  computerKeyboard: 0,
+  computerMouse: 0,
+  bookcaseOpen: 0,
+};
+
+const LEAD_LOOK: CharacterName = "male-e";
+
+function hash(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return h >>> 0;
 }
 
-const SCREEN: Record<AgentStatus, ScreenMode> = {
-  idle: "idle",
-  thinking: "thinking",
-  reading: "reading",
-  writing: "writing",
-  running: "running",
-  waiting: "waiting",
-  done: "idle",
-};
-
-const TITLE_COLOR: Record<RoomActivity, number> = {
-  waiting: 0xff8a80,
-  working: 0xa3e4a0,
-  idle: 0xd8dee9,
-  empty: 0x7b8496,
-};
+/** Staff look varies by agent id, never the lead's outfit. */
+function staffLook(id: string): CharacterName {
+  const pool = CHARACTERS.filter((c) => c !== LEAD_LOOK);
+  return pool[hash(id) % pool.length]!;
+}
 
 const deskKey = (pod: number, desk: number) => `${pod}:${desk}`;
 
-/**
- * One project room. `world` is pixel art in room coordinates (the scene
- * scales and places it); `ui` holds crisp unscaled text in screen space.
- */
-export class RoomView {
-  readonly world = new Container({ sortableChildren: true });
-  readonly ui = new Container();
-  size = roomSize(1);
+let floorTexture: THREE.CanvasTexture | undefined;
 
-  private readonly bg = new Sprite();
-  private readonly dim = new Graphics();
-  private readonly title: Text;
-  private readonly emptyLabel: Text;
+/** Warm wooden planks, drawn once and tiled per room. */
+function planks(): THREE.CanvasTexture {
+  if (floorTexture) return floorTexture;
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const ctx = c.getContext("2d")!;
+  const tones = ["#c99c6b", "#c3955f", "#cfa474", "#bf8f5c"];
+  for (let row = 0; row < 4; row++) {
+    for (let x = -64 + (row % 2) * 40; x < 128; x += 64) {
+      ctx.fillStyle = tones[(row * 3 + Math.floor(x / 64) + 4) % tones.length]!;
+      ctx.fillRect(x, row * 32, 64, 32);
+      ctx.fillStyle = "rgba(90,55,25,0.35)";
+      ctx.fillRect(x, row * 32, 1, 32);
+    }
+    ctx.fillStyle = "rgba(90,55,25,0.45)";
+    ctx.fillRect(0, row * 32 + 31, 128, 1);
+  }
+  floorTexture = new THREE.CanvasTexture(c);
+  floorTexture.colorSpace = THREE.SRGBColorSpace;
+  floorTexture.wrapS = floorTexture.wrapT = THREE.RepeatWrapping;
+  floorTexture.anisotropy = 4;
+  return floorTexture;
+}
+
+interface DeskView {
+  spot: DeskSpot;
+  screen: THREE.Mesh;
+}
+
+/** One project room: a diorama with north and west walls, a pod per session, and its characters. */
+export class RoomView {
+  readonly group = new THREE.Group();
+  size = roomSize(1);
+  /** Floor/base meshes used for click picking. */
+  readonly pickables: THREE.Object3D[] = [];
+
+  private readonly structure = new THREE.Group();
+  /** Room-local material copies (furniture shares geometry, but each room can dim its own lights). */
+  private readonly materials = new Map<THREE.Material, THREE.Material>();
+  private readonly originalColors = new Map<THREE.Material, THREE.Color>();
   private readonly desks = new Map<string, DeskView>();
-  private readonly agents = new Map<string, AgentSprite>();
-  private readonly leaving = new Set<AgentSprite>();
+  private readonly agents = new Map<string, Agent>();
+  private readonly leaving = new Set<Agent>();
+  private readonly title: CSS2DObject;
+  private readonly emptyLabel: CSS2DObject;
   private podCount = -1;
   private activity: RoomActivity = "empty";
-  private scale = 1;
-  private showTitle = false;
+  private dimmed = false;
 
   constructor(
     readonly key: string,
-    onClick: (key: string) => void,
+    private readonly assets: Assets,
   ) {
-    this.bg.zIndex = -1_000;
-    this.dim.zIndex = 20_000;
-    this.world.addChild(this.bg, this.dim);
-    this.world.on("pointertap", () => onClick(key));
+    this.group.add(this.structure);
+    const title = document.createElement("div");
+    title.className = "o3-room-title";
+    this.title = new CSS2DObject(title);
+    this.title.center.set(0, 1);
+    this.group.add(this.title);
 
-    const font = "ui-sans-serif, system-ui, 'Nanum Gothic', sans-serif";
-    this.title = new Text({ text: "", style: { fontFamily: font, fontSize: 13, fontWeight: "bold", fill: 0xd8dee9 }, resolution: 2 });
-    this.title.anchor.set(0, 1);
-    this.emptyLabel = new Text({ text: "비움 · 모두 퇴근", style: { fontFamily: font, fontSize: 14, fill: 0xc8cdd8 }, resolution: 2 });
-    this.emptyLabel.anchor.set(0.5);
-    this.ui.addChild(this.title, this.emptyLabel);
+    const empty = document.createElement("div");
+    empty.className = "o3-empty";
+    empty.textContent = "비움 · 모두 퇴근";
+    this.emptyLabel = new CSS2DObject(empty);
+    this.group.add(this.emptyLabel);
+  }
+
+  private place(name: FurnitureName, parent: THREE.Object3D, x: number, y: number, z: number, yaw = 0) {
+    const o = cloneFurniture(this.assets, name, this.materials);
+    o.position.set(x, y, z);
+    o.rotation.y = yaw + (FACING[name] ?? 0);
+    parent.add(o);
+    return o;
   }
 
   /** Reconciles characters with the room's present sessions. `firstPaint` seats everyone without walking in. */
   sync({ room, sessions, label, activity }: RoomInput, firstPaint: boolean) {
     this.activity = activity;
-    this.title.text = `${activity === "waiting" ? "! " : ""}${label}`;
-    this.title.style.fill = TITLE_COLOR[activity];
+    const titleEl = this.title.element;
+    titleEl.textContent = `${activity === "waiting" ? "! " : ""}${label}`;
+    titleEl.className = `o3-room-title o3-room-${activity}`;
 
     const pods = Math.max(1, room.pods.length);
     if (pods !== this.podCount) this.rebuild(pods);
@@ -100,108 +146,150 @@ export class RoomView {
         if (existing) {
           existing.agent = agent;
           existing.deskKey = spot ? deskKey(pod, agent.desk) : undefined;
-          existing.moveHome(home, !!spot);
+          existing.moveHome(home, spot?.yaw);
           continue;
         }
-        const name =
-          agent.kind === "main" ? (multi ? `팀장 ${session.sessionId.slice(0, 4)}` : "팀장") : (agent.type ?? "직원");
-        const sprite = new AgentSprite(agent, home, !!spot, !firstPaint, name, this.world, this.ui);
-        sprite.deskKey = spot ? deskKey(pod, agent.desk) : undefined;
-        this.agents.set(key, sprite);
+        const lead = agent.kind === "main";
+        const name = lead ? (multi ? `팀장 ${session.sessionId.slice(0, 4)}` : "팀장") : (agent.type ?? "직원");
+        const look = lead ? LEAD_LOOK : staffLook(agent.key);
+        const a = new Agent(this.assets, agent, look, home, spot?.yaw, !firstPaint, name);
+        a.deskKey = spot ? deskKey(pod, agent.desk) : undefined;
+        this.group.add(a.root);
+        this.agents.set(key, a);
       }
     });
-    for (const [key, sprite] of this.agents) {
+    for (const [key, a] of this.agents) {
       if (wanted.has(key)) continue;
-      sprite.leave();
+      a.leave();
       this.agents.delete(key);
-      this.leaving.add(sprite);
+      this.leaving.add(a);
     }
   }
 
   private rebuild(pods: number) {
     this.podCount = pods;
     this.size = roomSize(pods);
-    const origins = Array.from({ length: pods }, (_, i) => podOrigin(i));
-    this.bg.texture = roomTexture(this.size.w, this.size.h, origins);
-    this.world.hitArea = new Rectangle(0, 0, this.size.w, this.size.h);
-    this.dim.clear().rect(0, 0, this.size.w, this.size.h).fill({ color: 0x0b0d14, alpha: 0.5 });
-
-    // Furniture shares the world's z-ordering with characters, so it lives directly in world.
-    for (const child of this.world.children.filter((c) => c.label === "furniture")) child.destroy();
+    const { w, d } = this.size;
+    for (const child of [...this.structure.children]) child.removeFromParent();
     this.desks.clear();
-    for (let pod = 0; pod < pods; pod++) for (const spot of podDesks(pod)) this.addDesk(spot);
+    this.pickables.length = 0;
+
+    // base slab and floor
+    const slabMat = this.own(new THREE.MeshStandardMaterial({ color: 0x3a3343, roughness: 0.9 }));
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(w + 0.3, 0.4, d + 0.3), slabMat);
+    slab.position.set(w / 2, -0.2, d / 2);
+    slab.receiveShadow = true;
+    const map = planks().clone();
+    map.repeat.set(w / 2, d / 2);
+    map.needsUpdate = true;
+    const floorMat = this.own(new THREE.MeshStandardMaterial({ map, roughness: 0.85 }));
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), floorMat);
+    floor.position.set(w / 2, 0.002, d / 2);
+    floor.receiveShadow = true;
+    this.structure.add(slab, floor);
+    this.pickables.push(slab, floor);
+    for (const p of this.pickables) p.userData.roomKey = this.key;
+
+    // walls: north (windows every few tiles) and west (door near the back)
+    for (let i = 0; i < w; i++) {
+      const windowed = i >= 2 && i < w - 2 && i % 2 === 0;
+      this.place(windowed ? "wallWindow" : "wall", this.structure, i + 0.5, 0, 0.03);
+    }
+    for (let j = 0; j < d; j++) {
+      this.place(j === DOOR_TILE_Z ? "wallDoorway" : "wall", this.structure, 0.03, 0, j + 0.5, Math.PI / 2);
+    }
+
+    // decoration along the east side and corners
+    this.place("bookcaseOpen", this.structure, w - 0.8, 0, 0.2);
+    this.place("bookcaseOpen", this.structure, w - 1.3, 0, 0.2);
+    this.place("pottedPlant", this.structure, w - 0.35, 0, 0.35);
+    this.place("sideTable", this.structure, w - 0.4, 0, 1.9, -Math.PI / 2);
+    this.place("kitchenCoffeeMachine", this.structure, w - 0.4, this.assets.size.sideTable.y, 1.9, -Math.PI / 2);
+    this.place("pottedPlant", this.structure, w - 0.4, 0, d - 0.4);
+    this.place("pottedPlant", this.structure, 0.45, 0, d - 0.4);
+    this.place("coatRackStanding", this.structure, 0.35, 0, 2.6);
+    this.place("trashcan", this.structure, 0.35, 0, 0.35);
+
+    for (let pod = 0; pod < pods; pod++) {
+      const o = podOrigin(pod);
+      this.place("rugRectangle", this.structure, o.x + 2.2, 0.004, o.z + 0.65);
+      this.place("plantSmall1", this.structure, o.x + 3.3, 0, o.z + 0.3);
+      this.place("lampRoundFloor", this.structure, o.x + 1.1, 0, o.z + 0.3);
+      for (const spot of podDesks(pod)) this.addDesk(spot);
+    }
+
+    this.title.position.set(0.1, 1.45, 0);
+    this.emptyLabel.position.set(w / 2, 0.8, d / 2);
+    if (this.dimmed) this.applyDim(true);
+  }
+
+  /** Registers a room-owned material so dimming reaches it too. */
+  private own<T extends THREE.Material>(m: T): T {
+    this.materials.set(m, m);
+    return m;
   }
 
   private addDesk(spot: DeskSpot) {
-    const chair = new Sprite(chairTexture(spot.lead));
-    chair.anchor.set(0.5, 1);
-    // Top of the chair back sits at shoulder height of the seated character.
-    chair.position.set(spot.seat.x, spot.seat.y - 2);
-    chair.zIndex = spot.seat.y - 20;
+    const unit = new THREE.Group();
+    unit.position.set(spot.desk.x, 0, spot.desk.z);
+    unit.rotation.y = spot.yaw;
+    const deskH = this.assets.size.desk.y;
+    this.place("desk", unit, 0, 0, 0);
+    this.place("chairDesk", unit, 0, 0, 0.62);
+    // The lead faces the camera, so their monitor goes to one side, angled in, to keep the face visible.
+    const monitor = spot.lead
+      ? this.place("computerScreen", unit, 0.2, deskH, -0.06, 0.45)
+      : this.place("computerScreen", unit, 0, deskH, -0.08);
+    this.place("computerKeyboard", unit, -0.02, deskH, 0.1);
+    this.place("computerMouse", unit, 0.22, deskH, 0.1);
 
-    const desk = new Sprite(spot.lead ? deskTextures().lead : deskTextures().sub);
-    desk.position.set(spot.desk.x - 1, spot.desk.y - 1);
-    const front = spot.desk.y + spot.h;
-    desk.zIndex = front;
+    // glowing screen on the monitor's display face (a child, so it follows the monitor)
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.31, 0.19), screenMaterial("off"));
+    screen.position.set(0, 0.165, this.assets.size.computerScreen.z / 2 + 0.004);
+    monitor.add(screen);
 
-    const monitor = new Sprite(monitorTexture("off", 0));
-    monitor.position.set(spot.monitor.x, spot.monitor.y);
-    monitor.zIndex = front + 1;
-
-    for (const s of [chair, desk, monitor]) s.label = "furniture";
-    this.world.addChild(chair, desk, monitor);
-    this.desks.set(deskKey(spot.pod, spot.index), { spot, monitor, front });
+    this.structure.add(unit);
+    this.desks.set(deskKey(spot.pod, spot.index), { spot, screen });
   }
 
-  /** Places the room on screen. */
-  layout(x: number, y: number, scale: number, showTitle: boolean, clickable: boolean) {
-    this.scale = scale;
-    this.showTitle = showTitle;
-    this.world.position.set(Math.round(x), Math.round(y));
-    this.world.scale.set(scale);
-    this.world.eventMode = clickable ? "static" : "none";
-    this.world.cursor = clickable ? "pointer" : "default";
-    this.title.position.set(Math.round(x + 2), Math.round(y - 4));
-    this.emptyLabel.position.set(Math.round(x + (this.size.w * scale) / 2), Math.round(y + (this.size.h * scale) / 2));
+  private applyDim(on: boolean) {
+    for (const m of this.materials.values()) {
+      const mat = m as THREE.MeshStandardMaterial;
+      if (!mat.color) continue;
+      if (!this.originalColors.has(mat)) this.originalColors.set(mat, mat.color.clone());
+      mat.color.copy(this.originalColors.get(mat)!);
+      if (on) mat.color.multiplyScalar(0.32);
+    }
   }
 
-  set visible(v: boolean) {
-    this.world.visible = v;
-    this.ui.visible = v;
-  }
-
-  private toScreen = (p: Point): Point => ({
-    x: this.world.x + p.x * this.scale,
-    y: this.world.y + p.y * this.scale,
-  });
-
-  tick(dtMs: number, now: number, frame: number, detail: boolean) {
+  tick(dtMs: number, now: number, detail: boolean, shown: boolean) {
     const empty = this.activity === "empty" && this.agents.size === 0 && this.leaving.size === 0;
-    this.dim.visible = empty;
-    this.emptyLabel.visible = empty;
-    this.title.visible = this.showTitle;
+    if (empty !== this.dimmed) {
+      this.dimmed = empty;
+      this.applyDim(empty);
+    }
+    this.emptyLabel.visible = shown && empty;
+    this.title.visible = shown;
 
-    const occupied = new Map<string, AgentSprite>();
+    const occupied = new Map<string, Agent>();
     for (const a of this.agents.values()) if (a.deskKey) occupied.set(a.deskKey, a);
     for (const [key, desk] of this.desks) {
       const a = occupied.get(key);
-      desk.monitor.texture = monitorTexture(a ? SCREEN[visualStatus(a.agent, now)] : "off", frame);
+      desk.screen.material = screenMaterial(a ? SCREEN_MODE[visualStatus(a.agent, now)] : "off");
     }
-    for (const a of this.agents.values()) {
-      a.update(dtMs, now, this.toScreen, this.scale, detail, a.deskKey ? this.desks.get(a.deskKey)?.front : undefined);
-    }
+    for (const a of this.agents.values()) a.update(dtMs, now, detail, shown);
     for (const a of this.leaving) {
-      a.update(dtMs, now, this.toScreen, this.scale, detail);
+      a.update(dtMs, now, detail, shown);
       if (a.done) {
-        a.destroy();
+        a.dispose();
         this.leaving.delete(a);
       }
     }
   }
 
-  destroy() {
-    for (const a of [...this.agents.values(), ...this.leaving]) a.destroy();
-    this.world.destroy({ children: true });
-    this.ui.destroy({ children: true });
+  dispose() {
+    for (const a of [...this.agents.values(), ...this.leaving]) a.dispose();
+    this.group.removeFromParent();
+    for (const m of this.materials.values()) m.dispose();
   }
 }

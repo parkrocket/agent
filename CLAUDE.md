@@ -26,7 +26,7 @@ node --test hooks/sanitize.test.mjs                                   # 파일 �
 node --test --test-name-pattern="Bash command" hooks/sanitize.test.mjs  # 테스트 하나만
 pnpm --filter @ai-office/shared exec tsx --test --test-name-pattern="parallel" src/office.test.ts
 node scripts/simulate.mjs --projects 3 --sessions 2 [--seed 7] [--speed 2]   # 가짜 세션 동시 재생 (서버 실행 중일 때)
-node scripts/screenshot.mjs out.png [--view lobby|<방 cwd>] [--shots 10 --every 1500] [--size 1700x1100]
+node scripts/screenshot.mjs out.png [--view lobby|<방 cwd>] [--shots 10 --every 1500] [--size 1600x1000] [--scale 2] [--ls key=value]
 AI_OFFICE_DB=/tmp/x.db AI_OFFICE_OFF_DUTY_MIN=0.5 pnpm dev   # 데모·테스트용: 임시 DB, 퇴근 30초
 pnpm --filter @ai-office/server dev   # 패키지 하나만
 pnpm hooks:install --dry-run          # ~/.claude/settings.json 병합 결과만 출력
@@ -96,19 +96,21 @@ async hook 때문에 생기는 경우도 처리한다:
   - 권한은 토글을 켤 때만 요청한다(`ai-office.alerts`).
   - 대기가 있으면 탭 제목이 깜빡인다.
 
-**PixiJS 사무실** (`apps/web/office/`): Pixi는 window를 쓰므로 `OfficeCanvas`가 동적 import로 클라이언트에서만 불러온다. 서버 렌더링 컴포넌트는 pixi를 import하는 모듈(`AgentSprite` 등) 대신 `office/status.ts`를 써야 한다.
-- **화면 구성:** Pixi 앱은 하나이고, 방마다 `RoomView`가 있다. `OfficeScene`이 로비 격자나 집중 보기로 배치한다.
-- **배율:** 모든 방이 같은 배율이라 캐릭터 크기가 같다. 2배 이상이면 정수, 1~2배 사이는 0.25 단위다. 로비에서는 1.5배 미만이면 말풍선·이름표를 숨긴다.
-- **레이어:** 방마다 `world`와 `ui` 두 개다. `world`는 확대하는 픽셀 레이어이고, zIndex는 발 y좌표 기준이다. `ui`는 확대하지 않는 레이어로, 말풍선·이름표가 선명하게 보이도록 여기에 그린다.
-- **좌표:** 전부 확대 전 픽셀이고 방 기준이다(`layout.ts`). pod 하나는 264×150이고 한 줄에 2개가 들어간다. pod가 1개면 방은 372×208이다.
+**3D 사무실** (`apps/web/office/`, Three.js): Three는 window를 쓰므로 `OfficeCanvas`가 동적 import로 클라이언트에서만 불러온다. 서버 렌더링 컴포넌트는 three를 import하는 모듈 대신 `office/status.ts`(상태 라벨, 말풍선 문구)를 써야 한다.
+- **화면 구성:** 장면은 하나이고 카메라는 고정된 직교 카메라다(`VIEW_DIR`: 정 아이소메트릭에서 약 25° 돌린 각도. 방이 가로로 넓게 보여 크게 그려진다). `OfficeScene`이 로비는 방들을 격자로 놓고 전부, 집중 보기는 한 방만 프레이밍한다. 카메라는 목표 프레이밍으로 부드럽게 이동한다.
+- **좌표:** 바닥 타일 1칸 = 1단위, 방 북서쪽 모서리 기준이다. x는 동쪽, z는 남쪽(카메라 쪽)이다. 벽은 북·서쪽에만 있다(잘라 낸 디오라마). 팀 구역 하나는 4.4×4.8칸이고, 방 크기는 벽 타일에 맞춰 정수로 올린다(`layout.ts`).
+- **책상 묶음:** 묶음 안에서는 앉는 사람이 +z 쪽에서 -z를 본다. 직원은 회전 0(남쪽에 앉아 북쪽의 팀장을 봄, 카메라에 모니터 화면이 보임), 팀장은 π(카메라를 봄)다. 팀장 모니터는 얼굴이 가리지 않게 옆으로 비킨다.
+- **에셋:** `public/assets/kenney/`의 Kenney Furniture Kit, Mini Characters다(CC0, 각 폴더에 `License.txt`). `assets.ts`가 한 번만 로드한다. 가구는 바닥 중심·밑면 y=0으로 다시 맞춘 뒤 복제한다. 모델 기본 방향 보정은 `RoomView.ts`의 `FACING` 표에 있다. 방마다 재질 사본을 가져서, 빈 방은 그 방 재질만 어둡게 한다(불 끄기).
+- **캐릭터 애니메이션:** 뼈대는 root, leg-left/right, torso, arm-left/right, head다. `partClip`으로 하체(`sit`/`walk`/`static`)와 상체(`interact-right`=타이핑, `idle`, `emote-yes`)를 나눠 겹친다. 그 위에 `Agent.pose()`가 뼈 회전을 덧붙인다(손 들기 = arm-right에 X −2.9, Z +0.35. Z가 음수면 팔이 큰 머리 속으로 접혀 안 보인다).
+- **모니터 화면:** `screens.ts`가 상태별 캔버스 텍스처를 하나씩만 만들어 모든 모니터가 공유한다.
+- **라벨:** 말풍선·이름표·"!"·방 제목은 `CSS2DRenderer`의 HTML이다(스타일은 `app/globals.css`의 `.o3-*`). CSS2D 라벨은 부모가 숨겨져도 따라 숨지 않으므로, 방이 안 보일 때는 `update(..., shown)`으로 직접 숨긴다.
 - **상태 반영:** `RoomView.sync`가 화면과 상태를 비교해 맞춘다. 첫 화면에 있던 캐릭터는 바로 앉고, 그 뒤 새로 생긴 캐릭터(팀장 포함)는 문에서 걸어 들어온다. 퇴근하거나 SubagentStop이 오면 걸어 나간다.
-- **에셋은 모두 `sprites.ts`에서 코드로 그린다.** 저작권 문제를 피하려는 의도적인 결정이다. 외부 이미지를 추가하려면 CC0만 쓴다.
 
 **설치 스크립트** (`scripts/settings-lib.mjs`): 쓰기 전에 `settings.json.bak-<시각>`으로 백업한다. command 문자열에 `ai-office-hook.mjs`가 들어 있는지로 자기 항목을 식별하므로, 다시 설치하면 교체되고 제거할 때 다른 사용자 hook은 남는다. JSON을 파싱하지 못하면 덮어쓰지 않고 중단한다. `--settings <path>`로 다른 파일을 대상으로 지정할 수 있다. command에는 `process.execPath`로 얻은 node 절대경로가 들어가므로, nvm으로 node 버전을 바꾸면 다시 설치해야 한다.
 
 ## 디버깅
 
-- **스크린샷:** WSL에서 headless Chromium을 쓰려면 sudo 없이 받아 둔 라이브러리와 폰트가 필요하다(`~/.cache/ai-office-libs`). `LD_LIBRARY_PATH=~/.cache/ai-office-libs/root/usr/lib/x86_64-linux-gnu FONTCONFIG_FILE=~/.cache/ai-office-libs/fonts.conf node scripts/screenshot.mjs ...` 형태로 실행한다. 이 Claude 세션 자신의 이벤트도 들어오므로, 시뮬레이션을 찍을 때는 `--view lobby` 또는 `--view <방 cwd>`로 화면을 고정한다.
+- **스크린샷:** WSL에서 headless Chromium을 쓰려면 sudo 없이 받아 둔 라이브러리와 폰트가 필요하다(`~/.cache/ai-office-libs`). `LD_LIBRARY_PATH=~/.cache/ai-office-libs/root/usr/lib/x86_64-linux-gnu FONTCONFIG_FILE=~/.cache/ai-office-libs/fonts.conf node scripts/screenshot.mjs ...` 형태로 실행한다. 이 Claude 세션 자신의 이벤트도 들어오므로, 시뮬레이션을 찍을 때는 `--view lobby` 또는 `--view <방 cwd>`로 화면을 고정한다. 3D는 캐릭터가 작아서 세부를 볼 때는 `--scale 2` 이상으로 찍어 잘라 본다. `--ls ai-office.log=collapsed`로 로그를 접으면 사무실이 크게 나온다.
 - **시뮬레이션 DB:** 시뮬레이션은 실제 DB에 기록된다. 실제 데이터와 섞이지 않게 `AI_OFFICE_DB`를 임시 경로로 바꿔서 띄운다.
 
 - 실제 hook 입력을 보려면 hook command 앞에 `AI_OFFICE_DUMP=<파일>`을 붙인다. 원본 JSON이 그 로컬 파일에 쌓인다. 프롬프트 원문이 포함되니 디버깅할 때만 쓴다.

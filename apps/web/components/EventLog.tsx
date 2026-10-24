@@ -11,6 +11,8 @@ export function EventLog({
   inScope,
   onClear,
   emptyText,
+  collapsed,
+  onToggleCollapsed,
 }: {
   events: OfficeEvent[];
   /** Label for the "only this room" filter; omitted in the lobby, where there's no single room. */
@@ -18,6 +20,8 @@ export function EventLog({
   inScope?: (e: OfficeEvent) => boolean;
   onClear: () => void;
   emptyText: string;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }) {
   const [autoScroll, setAutoScroll] = useState(true);
   const [onlyScope, setOnlyScope] = useState(false);
@@ -33,6 +37,9 @@ export function EventLog({
     <section className={styles.root}>
       <header className={styles.header}>
         <h2>이벤트 로그</h2>
+        <button onClick={onToggleCollapsed} aria-expanded={!collapsed}>
+          {collapsed ? "▴ 펼치기" : "▾ 접기"}
+        </button>
         {scopeLabel && (
           <label className={styles.toggle}>
             <input type="checkbox" checked={onlyScope} onChange={(e) => setOnlyScope(e.target.checked)} />
@@ -45,7 +52,7 @@ export function EventLog({
         </label>
         <button onClick={onClear}>지우기</button>
       </header>
-      <div className={styles.log} ref={logRef}>
+      <div className={styles.log} ref={logRef} hidden={collapsed}>
         {shown.length === 0 && <p className={styles.empty}>{emptyText}</p>}
         {shown.map((e) => (
           <div
