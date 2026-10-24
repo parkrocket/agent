@@ -1,6 +1,6 @@
 # AI Office
 
-Claude Code 세션을 픽셀아트 사무실로 실시간 시각화하는 프로그램. (현재 1단계: 텍스트 이벤트 로그)
+Claude Code 세션을 픽셀아트 사무실로 실시간 시각화하는 프로그램. 메인 에이전트는 팀장 책상에 앉고, 서브에이전트는 직원으로 문에서 걸어 들어와 빈 책상에 앉았다가 일이 끝나면 나간다. (현재 2단계: 세션 하나 기준의 사무실 + 이벤트 로그)
 
 ```
 Claude Code hook ──POST /events──▶ apps/server (Fastify :7420) ──WebSocket /ws──▶ apps/web (Next.js :7421)
@@ -10,11 +10,11 @@ Claude Code hook ──POST /events──▶ apps/server (Fastify :7420) ──W
 
 | 경로 | 설명 |
 |---|---|
-| `packages/shared` | `OfficeEvent` 타입·zod 스키마, WS 프로토콜 |
-| `apps/server` | 이벤트 수신, 최근 500개 링버퍼, WebSocket 브로드캐스트 |
-| `apps/web` | 실시간 이벤트 로그 페이지 |
+| `packages/shared` | `OfficeEvent` 타입·zod 스키마, 상태 reducer(`office.ts`), WS 프로토콜 |
+| `apps/server` | 이벤트 수신, 세션 상태 관리, WebSocket 브로드캐스트(접속 시 스냅샷) |
+| `apps/web` | PixiJS 픽셀 사무실 + 이벤트 로그, 세션 선택 |
 | `hooks/` | Claude Code hook 스크립트 (의존성 없음) |
-| `scripts/` | `~/.claude/settings.json`에 hook 설치/제거 |
+| `scripts/` | hook 설치/제거, 시뮬레이터(`simulate.mjs`), 스크린샷(`screenshot.mjs`) |
 
 ## 실행
 
@@ -25,6 +25,22 @@ pnpm dev            # server :7420 + web :7421
 
 Windows 브라우저에서 http://localhost:7421 접속 (WSL2 localhost 포워딩).
 포워딩이 안 되면 `HOST=0.0.0.0 pnpm dev`로 실행.
+
+실제 Claude 세션 없이 보려면 서버를 띄운 상태에서 `node scripts/simulate.mjs`를 실행하세요.
+
+## 캐릭터 상태
+
+| 상태 | 언제 | 화면 |
+|---|---|---|
+| 휴식 | 세션 시작 직후, 완료 후 30초 지남 | 졸면서 z |
+| 생각 중 | 요청을 받았거나 도구 사이 | 말풍선 "…" |
+| 읽는 중 | Read / Grep / Glob / WebFetch / WebSearch | 고개 숙임, 파란 화면 |
+| 작성 중 | Edit / Write / NotebookEdit | 타이핑, 노란 화면 |
+| 실행 중 | Bash | 타이핑, 초록 터미널 |
+| 손 듦 | 권한 요청, 입력 대기 알림 | 손 들기 + "!" + 승인 대기 말풍선 |
+| 완료 | Stop | 기지개, "완료!" |
+
+에셋(캐릭터·가구·방)은 모두 코드로 직접 그린 픽셀 아트라 외부 이미지·폰트가 없습니다.
 
 ## hook 설치 / 제거
 

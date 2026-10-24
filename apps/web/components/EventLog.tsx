@@ -1,72 +1,48 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { OfficeEvent, ServerMessage } from "@ai-office/shared";
+import type { OfficeEvent } from "@ai-office/shared";
 import { formatAgent, formatSummary, formatTime, needsAttention } from "@/lib/format";
 import styles from "./EventLog.module.css";
 
-const WS_URL = process.env.NEXT_PUBLIC_AI_OFFICE_WS ?? "ws://localhost:7420/ws";
-const MAX_LINES = 500;
-
-type Status = "connecting" | "open" | "closed";
-
-export function EventLog() {
-  const [events, setEvents] = useState<OfficeEvent[]>([]);
-  const [status, setStatus] = useState<Status>("connecting");
+export function EventLog({
+  events,
+  currentSessionId,
+  onClear,
+  emptyText,
+}: {
+  events: OfficeEvent[];
+  currentSessionId?: string;
+  onClear: () => void;
+  emptyText: string;
+}) {
   const [autoScroll, setAutoScroll] = useState(true);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const [onlyCurrent, setOnlyCurrent] = useState(false);
+  const logRef = useRef<HTMLDivElement>(null);
+  const shown = onlyCurrent && currentSessionId ? events.filter((e) => e.sessionId === currentSessionId) : events;
 
   useEffect(() => {
-    let socket: WebSocket | null = null;
-    let retry = 0;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let disposed = false;
-
-    const connect = () => {
-      setStatus("connecting");
-      socket = new WebSocket(WS_URL);
-      socket.onopen = () => {
-        retry = 0;
-        setStatus("open");
-      };
-      socket.onmessage = (msg) => {
-        const data = JSON.parse(msg.data as string) as ServerMessage;
-        if (data.type === "snapshot") setEvents(data.events.slice(-MAX_LINES));
-        else setEvents((prev) => [...prev, data.event].slice(-MAX_LINES));
-      };
-      socket.onclose = () => {
-        setStatus("closed");
-        if (disposed) return;
-        timer = setTimeout(connect, Math.min(10_000, 500 * 2 ** retry++));
-      };
-    };
-    connect();
-
-    return () => {
-      disposed = true;
-      clearTimeout(timer);
-      socket?.close();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (autoScroll) bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [events, autoScroll]);
+    const el = logRef.current;
+    if (autoScroll && el) el.scrollTop = el.scrollHeight;
+  }, [shown, autoScroll]);
 
   return (
-    <main className={styles.root}>
+    <section className={styles.root}>
       <header className={styles.header}>
-        <h1>AI Office · event log</h1>
-        <span className={`${styles.badge} ${styles[status]}`}>{status}</span>
+        <h2>이벤트 로그</h2>
+        <label className={styles.toggle}>
+          <input type="checkbox" checked={onlyCurrent} onChange={(e) => setOnlyCurrent(e.target.checked)} />
+          현재 세션만
+        </label>
         <label className={styles.toggle}>
           <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} />
           자동 스크롤
         </label>
-        <button onClick={() => setEvents([])}>지우기</button>
+        <button onClick={onClear}>지우기</button>
       </header>
-      <div className={styles.log}>
-        {events.length === 0 && <p className={styles.empty}>이벤트 대기 중… ({WS_URL})</p>}
-        {events.map((e) => (
+      <div className={styles.log} ref={logRef}>
+        {shown.length === 0 && <p className={styles.empty}>{emptyText}</p>}
+        {shown.map((e) => (
           <div
             key={e.id}
             className={[
@@ -74,6 +50,7 @@ export function EventLog() {
               needsAttention(e) ? styles.attention : "",
               e.event === "PostToolUseFailure" ? styles.failure : "",
               e.agent.kind === "sub" ? styles.sub : "",
+              e.sessionId === currentSessionId ? "" : styles.otherSession,
             ].join(" ")}
           >
             <span className={styles.time}>{formatTime(e.ts)}</span>
@@ -84,8 +61,7 @@ export function EventLog() {
             <span>{formatSummary(e)}</span>
           </div>
         ))}
-        <div ref={bottomRef} />
       </div>
-    </main>
+    </section>
   );
 }

@@ -1,11 +1,12 @@
 import type { OfficeEvent } from "@ai-office/shared";
 
 export function formatTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString("ko-KR", { hour12: false });
+  const d = new Date(ts);
+  return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, "0")).join(":");
 }
 
 export function formatAgent(e: OfficeEvent): string {
-  return e.agent.kind === "main" ? "👔 main" : `🧑‍💻 ${e.agent.type ?? "sub"}:${e.agent.id.slice(0, 6)}`;
+  return e.agent.kind === "main" ? "👔 main" : `🧑‍💻 ${e.agent.type ?? "sub"}:${e.agent.id.replace(/^agent-/, "").slice(0, 6)}`;
 }
 
 export function formatSummary(e: OfficeEvent): string {
