@@ -15,6 +15,10 @@ export interface SceneInput {
   /** Focus mode: the one room to frame (the lobby frames the whole building). */
   visible: string[];
   mode: SceneMode;
+  /** Changing this starts over as a first paint (everyone seated, no walking in): replay start, seek, back to live. */
+  epoch?: string;
+  /** Time agents' states are judged at (replay time); defaults to the wall clock. */
+  clock?: () => number;
 }
 /**
  * View direction (from target towards the camera): mostly south, a little east,
@@ -109,6 +113,7 @@ export class OfficeScene {
   }
 
   sync(input: SceneInput) {
+    if (input.epoch !== this.input.epoch) this.reset();
     this.input = input;
     const keys = new Set(input.rooms.map((r) => r.room.key));
     for (const [key, view] of this.rooms) {
@@ -130,6 +135,13 @@ export class OfficeScene {
     this.initialized = true;
     this.overlay.textContent = input.rooms.length ? "" : "Claude Code 세션을 기다리는 중…";
     this.layout();
+  }
+
+  /** Drops every room so the next sync is a first paint. */
+  private reset() {
+    for (const view of this.rooms.values()) view.dispose();
+    this.rooms.clear();
+    this.initialized = false;
   }
 
   /** Places rooms in the building (stable order) and sets the camera goal. */
@@ -220,8 +232,9 @@ export class OfficeScene {
     const detail: Detail =
       this.input.mode === "focus" ? "full" : pxPerTile >= DETAIL_PX_PER_TILE ? "summary" : "none";
     const wall = Date.now();
+    const clock = this.input.clock?.() ?? wall;
     updateScreens(wall);
-    for (const view of this.rooms.values()) view.tick(dt, wall, detail, true);
+    for (const view of this.rooms.values()) view.tick(dt, wall, detail, true, clock);
     this.building.tick(dt, [...this.rooms.values()].flatMap((v) => v.walkers()));
 
     this.renderer.render(this.scene, this.camera);

@@ -13,6 +13,7 @@ import {
   type TokenCounts,
   type UsageSnapshot,
 } from "@ai-office/shared";
+import { formatDateTime, formatDuration } from "@/lib/format";
 import { SERVER_URL } from "@/lib/useOfficeSocket";
 import { todayTotals, totalTokens } from "@/lib/usage";
 import styles from "./UsagePanel.module.css";
@@ -25,15 +26,6 @@ const sumAgents = (agents: Record<string, AgentUsage>) =>
     (acc, a) => ({ tokens: addTokens(acc.tokens, a.tokens), cost: acc.cost + a.cost }),
     { tokens: ZERO_TOKENS, cost: 0 },
   );
-const pad = (n: number) => String(n).padStart(2, "0");
-const time = (ts: number) => {
-  const d = new Date(ts);
-  return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
-const duration = (ms: number) => {
-  const m = Math.round(ms / 60_000);
-  return m < 60 ? `${m}분` : `${Math.floor(m / 60)}시간 ${m % 60}분`;
-};
 
 function Breakdown({ t }: { t: TokenCounts }) {
   return (
@@ -172,8 +164,8 @@ export function UsagePanel({
                     {label} <span className={styles.dim}>{s.sessionId.slice(0, 6)}</span>
                     {!live && <span className={styles.dim}> · 기록만</span>}
                   </td>
-                  <td>{time(s.firstTs)}</td>
-                  <td>{duration(s.lastTs - s.firstTs)}</td>
+                  <td>{formatDateTime(s.firstTs)}</td>
+                  <td>{formatDuration(s.lastTs - s.firstTs)}</td>
                   <td className={styles.num}>{formatTokens(totalTokens(sum.tokens))}</td>
                   {showCost && <td className={styles.num}>{usd(sum.cost)}</td>}
                 </tr>

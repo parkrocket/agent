@@ -43,6 +43,7 @@ node --test --test-name-pattern="Bash command" hooks/sanitize.test.mjs  # 테스
 pnpm --filter @ai-office/shared exec tsx --test --test-name-pattern="parallel" src/office.test.ts
 node scripts/simulate.mjs --projects 3 --sessions 2 [--seed 7] [--speed 2]   # 가짜 세션 동시 재생 (서버 실행 중일 때)
 node scripts/screenshot.mjs out.png [--view lobby|<방 cwd>] [--shots 10 --every 1500] [--size 1600x1000] [--scale 2] [--ls key=value]
+node scripts/screenshot.mjs out.png --replay <세션ID>|latest [--replay-at 0.4] [--replay-speed 16] [--replay-pause]   # 다시보기 화면
 AI_OFFICE_DB=/tmp/x.db AI_OFFICE_OFF_DUTY_MIN=0.5 pnpm dev   # 데모·테스트용: 임시 DB, 퇴근 30초
 CLAUDE_CONFIG_DIR=/tmp/ch AI_OFFICE_DB=/tmp/x.db pnpm dev     # 사용량 데모: 가짜 대화 기록 폴더
 node scripts/simulate.mjs --transcripts /tmp/ch/projects       # 가짜 대화 기록(토큰 수만)도 함께 기록
@@ -109,7 +110,7 @@ async hook 때문에 생기는 경우도 처리한다:
   - `state`: sweep이나 세션 정리 후
   - `usage`: 사용량 변화 시(1초에 최대 한 번)
   - 타입은 `packages/shared/src/protocol.ts`에 있다.
-- **HTTP:** `POST /events`(hook), `POST /usage/import`(과거 대화 기록 가져오기), `GET /health`.
+- **HTTP:** `POST /events`(hook), `POST /usage/import`(과거 대화 기록 가져오기), `GET /history`(지난 세션 목록), `GET /history/:sessionId/events`(이벤트 + 메시지별 사용량), `GET /health`.
 - **origin 검사:** `/ws` route의 `preValidation`에서 403으로 막는다. `@fastify/websocket`의 `verifyClient` 옵션을 쓰면 `injectWS`가 끝나지 않아 테스트가 멈추기 때문이다. CORS도 같은 목록(`AI_OFFICE_WEB_ORIGINS`, 기본값 `localhost:7421`·`127.0.0.1:7421`)을 쓴다.
 - **그 밖:** 기본 로그 레벨은 `warn`(`LOG_LEVEL`)이다. 기본 바인딩은 `127.0.0.1`이고, WSL 포워딩이 안 될 때만 `HOST=0.0.0.0`을 쓴다.
 
@@ -138,8 +139,17 @@ async hook 때문에 생기는 경우도 처리한다:
 - **에셋:** `public/assets/kenney/`의 Kenney Furniture Kit, Mini Characters다(CC0, 각 폴더에 `License.txt`). `assets.ts`가 한 번만 로드한다. 가구는 바닥 중심·밑면 y=0으로 다시 맞춘 뒤 복제한다. 모델 기본 방향 보정은 `RoomView.ts`의 `FACING` 표에 있다. 방마다 재질 사본을 가져서, 빈 방은 그 방 재질만 어둡게 한다(불 끄기).
 - **캐릭터 애니메이션:** 뼈대는 root, leg-left/right, torso, arm-left/right, head다. `partClip`으로 하체(`sit`/`walk`/`static`)와 상체(`interact-right`=타이핑, `idle`, `emote-yes`)를 나눠 겹친다. 그 위에 `Agent.pose()`가 뼈 회전을 덧붙인다(손 들기 = arm-right에 X −2.9, Z +0.35. Z가 음수면 팔이 큰 머리 속으로 접혀 안 보인다).
 - **모니터 화면:** `screens.ts`가 상태별 캔버스 텍스처를 하나씩만 만들어 모든 모니터가 공유한다.
-- **라벨:** 말풍선·이름표·"!"·방 제목은 `CSS2DRenderer`의 HTML이다(스타일은 `app/globals.css`의 `.o3-*`). CSS2D 라벨은 부모가 숨겨져도 따라 숨지 않으므로, 방이 안 보일 때는 `update(..., shown)`으로 직접 숨긴다.
+- **라벨:** 말풍선·이름표·"!"·방 제목은 `CSS2DRenderer`의 HTML이다(스타일은 `app/globals.css`의 `.o3-*`). CSS2D 라벨은 부모가 숨겨져도 따라 숨지 않으므로, 방이 안 보일 때는 `update(..., shown)`으로 직접 숨긴다. 부모를 장면에서 떼어도 자식 라벨의 DOM은 남으므로, `dispose()`에서 `element.remove()`로 직접 지운다.
+- **초기화(`SceneInput.epoch`):** epoch가 바뀌면 방을 모두 버리고 "첫 화면"으로 다시 그린다(캐릭터가 걸어 들어오지 않고 바로 앉음). 다시보기 진입, 시점 이동, 실시간 복귀 때 바뀐다. `SceneInput.clock`은 상태 판단 시각(재생 시각)이고, 모션 애니메이션은 벽시계를 쓴다.
 - **상태 반영:** `RoomView.sync`가 화면과 상태를 비교해 맞춘다. 첫 화면에 있던 캐릭터는 바로 앉고, 그 뒤 새로 생긴 캐릭터(팀장 포함)는 문에서 걸어 들어온다. 퇴근하거나 SubagentStop이 오면 걸어 나간다.
+
+**다시보기** (`packages/shared/src/replay.ts`, `apps/web/lib/useReplay.ts`, `components/Replay*.tsx`): 서버 상태는 건드리지 않고, 브라우저가 `GET /history/:id/events`로 받은 이벤트를 같은 reducer로 재생한다.
+- **타임라인:** `buildTimeline`이 이벤트를 `ts`로 정렬한다. 30초(`REPLAY_GAP_MS`)가 넘는 빈 구간은 재생 시간 2초로 압축하고, 마지막 이벤트 뒤에 3초 꼬리를 둔다. `toReal`/`toPlay`가 재생 시각과 실제 시각을 바꾸며, 압축 구간 안에서는 선형 보간이라 화면 시각은 실제 시각 그대로이고 그 사이 퇴근도 일어난다.
+- **상태:** `officeAt(events, ts, offDutyMs)` = 처음부터 `reduceOffice` 후 `sweepOffDuty` 한 번. `Replayer`는 앞으로 갈 때 증분 적용, 뒤로 가면 처음부터 다시 계산하며 결과는 항상 `officeAt`과 같다(sweep 전 상태를 따로 들고 있음). 바뀐 게 없으면 같은 객체를 돌려줘 장면을 다시 그리지 않는다.
+- **게이지:** `usageAt(records, models, ts)`가 그 시각까지의 메시지로 `UsageSnapshot`을 만든다(서버 `UsageTracker`와 같은 `addSessionUsage`를 씀).
+- **목록:** `GET /history`는 이벤트(보관 7일)와 사용량(90일)을 세션별로 합친다. 이벤트가 없으면 `replayable: false`("기록만", 재생 불가)다.
+- **화면:** 재생 세션의 방 하나만 있는 건물, 세피아 필터, "🎞 다시보기 중 · 실시간 아님" 띠, 하단 조작 막대(재생/일시정지, 1x/4x/16x, 타임라인, 실제 시각). 탭·알림을 누르면 다시보기를 나간다. 재생 중 캔버스 클릭은 무시한다.
+- **알림:** `useWaitingAlerts`는 실시간 `sessions`만 받으므로 재생 장면의 손 들기는 알림·제목 깜빡임을 만들지 않는다. 실제 세션 알림은 재생 중에도 울린다.
 
 **설치 스크립트** (`scripts/settings-lib.mjs`): 쓰기 전에 `settings.json.bak-<시각>`으로 백업한다. command 문자열에 `ai-office-hook.mjs`가 들어 있는지로 자기 항목을 식별하므로, 다시 설치하면 교체되고 제거할 때 다른 사용자 hook은 남는다. JSON을 파싱하지 못하면 덮어쓰지 않고 중단한다. `--settings <path>`로 다른 파일을 대상으로 지정할 수 있다. command에는 `process.execPath`로 얻은 node 절대경로가 들어가므로, nvm으로 node 버전을 바꾸면 다시 설치해야 한다.
 
@@ -168,27 +178,11 @@ async hook 때문에 생기는 경우도 처리한다:
 | 3D | Three.js 3D 디오라마로 교체(Kenney CC0 에셋) | #5 |
 | 건물 | 한 층짜리 건물(엘리베이터·공용 구역·복도), 출퇴근 동선 | #6 |
 | 4 (1/2) | 대화 기록 기반 토큰 사용량, 컨텍스트 게이지, 사용량 패널, 과거 기록 가져오기, 모델 한도·단가 설정 파일 | #7 |
-| 4 (2/2) | 세션 다시보기 | 다음 할 일 |
+| 4 (2/2) | 세션 다시보기(브라우저 재생, 빈 구간 압축, 그 시각 기준 게이지) | #8 |
 
 ## 다음 할 일
 
-**4단계 2/2: 세션 다시보기** (`main`에서 새 브랜치로 시작). 사용자와 합의한 내용:
-- **서버:**
-  - `GET /history`: 지난 세션 목록(프로젝트, 시작 시각, 길이, 이벤트 수, 토큰)
-  - `GET /history/:sessionId/events`: SQLite에 저장된 이벤트
-  - hook 이벤트가 없는 "기록만" 세션은 목록에 흐리게 표시하고 재생은 막는다.
-- **재생 엔진:** 서버 상태는 건드리지 않고, 브라우저에서 같은 reducer(`reduceOffice`, `sweepOffDuty`)로 재생한다. 순수 함수로 `packages/shared`에 두고 테스트한다.
-  - 시점 이동은 처음부터 그 시각까지 다시 계산한다.
-  - 30초 넘게 이벤트가 없는 구간은 재생에서 2초로 압축하고, 타임라인에 "… N분 건너뜀"으로 표시한다. 화면 시각은 실제 시각 그대로다.
-- **조작:** 🎞 버튼의 목록에서 세션을 고르고, 재생/일시정지, 1x/4x/16x, 타임라인 스크롤, 현재 시각을 제공한다.
-- **화면:**
-  - 재생할 세션의 방 하나만 있는 건물로 보여준다. `OfficeScene`에 초기화(첫 화면 취급) 기능이 필요하다. 그래야 실시간 화면으로 돌아올 때 캐릭터가 다시 걸어 들어오지 않는다.
-  - "🎞 다시보기 중 · 실시간 아님" 띠와 세피아 톤으로 실시간 화면과 구분한다.
-  - 게이지도 그 시각까지의 사용량으로 다시 계산한다(사용량 메시지 시각 기준).
-- **알림:** 재생 장면의 손 들기는 알림과 제목 깜빡임을 일으키지 않는다. 실제 세션의 알림은 재생 중에도 그대로 울리고, 알림을 누르면 다시보기를 나와 그 방으로 간다.
-- **테스트:** 재생 속도(1x/4x/16x에서 시각 진행), 빈 구간 압축, 시점 이동 후 상태가 처음부터 다시 계산한 결과와 같은지, 끝에서 멈추는지를 확인한다. Playwright로 다시보기 화면, 띠, 재생 중 알림이 울리지 않는지 확인한다.
-
-**그 밖의 후속 과제**
+후속 과제:
 - **버전 어긋남 대비:** 웹이 서버 메시지의 빠진 필드를 빈 값으로 처리하도록 한다(`data.rooms ?? {}` 등). 지금은 서버만 옛 코드면 페이지가 깨진다.
 - **실제 GPU 성능 확인:** Windows 브라우저에서 방이 많을 때 성능을 확인한다. 느리면 고정 가구를 합쳐 그리기 호출을 줄인다.
 - **라운지 휴식 연출:** 쉬는 팀장이 라운지에서 커피를 마시는 연출(공용 공간을 만들 때 나온 아이디어)

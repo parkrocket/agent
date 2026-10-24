@@ -3,6 +3,7 @@
 // Usage: node scripts/screenshot.mjs <out.png> [--url URL] [--wait ms] [--size 1280x800] [--reload]
 //        [--view lobby|<room cwd>] [--shots N --every ms]   (shots are saved as out-1.png, out-2.png, ...)
 //        [--ls key=value ...] (preset localStorage, e.g. --ls ai-office.log=collapsed) [--scale 2]
+//        [--replay <sessionId>|latest [--replay-at 0..1] [--replay-speed 1|4|16] [--replay-pause]]
 import { chromium } from "playwright";
 
 const args = process.argv.slice(2);
@@ -36,6 +37,37 @@ page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
 await page.goto(url, { waitUntil: "networkidle" });
 if (args.includes("--reload")) await page.reload({ waitUntil: "networkidle" });
 await page.waitForTimeout(wait);
+
+// Replay: open 🎞, pick a session (or the newest replayable one), then optionally seek / set speed / pause.
+const replay = opt("replay", "");
+if (replay) {
+  await page.click("[data-testid=replay-button]");
+  const row =
+    replay === "latest"
+      ? page.locator('[data-testid^="replay-session-"]:not([aria-disabled="true"])').first()
+      : page.locator(`[data-testid="replay-session-${replay}"]`);
+  await row.click();
+  await page.waitForSelector("[data-testid=replay-bar]");
+  const speed = opt("replay-speed", "");
+  if (speed) await page.click(`[data-testid=replay-bar] button:text-is("${speed}x")`);
+  if (args.includes("--replay-pause")) await page.click('[data-testid=replay-bar] button[aria-label="일시정지"]');
+  const at = opt("replay-at", "");
+  if (at) {
+    // a React-controlled range only hears the native setter plus an input event
+    await page.$eval(
+      "[data-testid=replay-range]",
+      (el, f) => {
+        const input = /** @type {HTMLInputElement} */ (el);
+        const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+        set.call(input, String(Number(input.max) * f));
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      },
+      Number(at),
+    );
+  }
+  await page.waitForTimeout(wait);
+}
+
 for (let i = 1; i <= shots; i++) {
   const path = shots > 1 ? out.replace(/\.png$/, `-${i}.png`) : out;
   await page.screenshot({ path });

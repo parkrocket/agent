@@ -7,6 +7,7 @@ import styles from "./EventLog.module.css";
 
 export function EventLog({
   events,
+  title = "이벤트 로그",
   scopeLabel,
   inScope,
   onClear,
@@ -15,6 +16,7 @@ export function EventLog({
   onToggleCollapsed,
 }: {
   events: OfficeEvent[];
+  title?: string;
   /** Label for the "only this room" filter; omitted in the lobby, where there's no single room. */
   scopeLabel?: string;
   inScope?: (e: OfficeEvent) => boolean;
@@ -36,7 +38,7 @@ export function EventLog({
   return (
     <section className={styles.root}>
       <header className={styles.header}>
-        <h2>이벤트 로그</h2>
+        <h2>{title}</h2>
         <button onClick={onToggleCollapsed} aria-expanded={!collapsed}>
           {collapsed ? "▴ 펼치기" : "▾ 접기"}
         </button>
