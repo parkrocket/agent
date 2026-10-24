@@ -14,9 +14,16 @@ export function registerEventRoutes(
     if (!parsed.success) {
       return reply.code(400).send({ error: "invalid event", issues: parsed.error.issues });
     }
+    // Reply before processing so the hook never waits on us.
     reply.code(204).send();
-    store.add(parsed.data);
-    broadcast(parsed.data, sessions.apply(parsed.data));
-    app.log.debug({ event: parsed.data.event, tool: parsed.data.tool }, "event");
+    const event = parsed.data;
+    try {
+      store.add(event);
+      broadcast(event, sessions.apply(event));
+      app.log.debug({ event: event.event, tool: event.tool }, "event");
+    } catch (err) {
+      // Already replied, so this would otherwise vanish; log enough to reproduce.
+      app.log.error({ err, event: event.event, sessionId: event.sessionId, eventId: event.id }, "failed to apply event");
+    }
   });
 }
