@@ -18,6 +18,15 @@ export const HOOK_EVENT_NAMES = [
 export const HookEventNameSchema = z.enum(HOOK_EVENT_NAMES);
 export type HookEventName = z.infer<typeof HookEventNameSchema>;
 
+/**
+ * Event format versions this server accepts. The installed hook is a copy
+ * (see scripts/settings-lib.mjs) and can lag behind or run ahead of the
+ * server: keep accepting older versions, and add new ones here together with
+ * EVENT_VERSION in hooks/sanitize.mjs.
+ */
+export const SUPPORTED_EVENT_VERSIONS: readonly number[] = [1];
+export const EVENT_VERSION = 1;
+
 const short = z.string().max(256);
 
 export const AgentRefSchema = z.discriminatedUnion("kind", [

@@ -1,121 +1,215 @@
-# AI Office
+# AI 오피스
 
-Claude Code 세션을 픽셀아트 사무실로 실시간 시각화하는 프로그램. 메인 에이전트는 팀장 책상에 앉고, 서브에이전트는 직원으로 문에서 걸어 들어와 빈 책상에 앉았다가 일이 끝나면 나간다.
-- 사무실 전체는 한 층짜리 건물이다. 엘리베이터·안내 데스크·라운지·회의실이 있는 공용 구역 옆으로, 프로젝트(cwd)마다 방이 하나씩 복도를 따라 붙는다.
-- 같은 프로젝트의 세션들은 한 방에서 팀 구역을 나눠 쓴다.
-- 캐릭터는 엘리베이터에서 내려 복도를 걸어 자기 방으로 출근하고, 오래 조용하면 엘리베이터로 퇴근한다.
+Claude Code 세션을 3D 사무실로 실시간으로 보여주는 프로그램입니다.
+
+- **캐릭터:** 메인 에이전트는 팀장, 서브에이전트는 직원 캐릭터가 됩니다. 도구를 쓰면 읽기·작성·실행 모습으로 바뀌고, 권한 승인이나 입력을 기다리면 손을 듭니다.
+- **방:** 프로젝트 폴더(cwd)마다 방이 하나씩 생깁니다. 캐릭터는 엘리베이터로 출근하고, 한동안 조용하면 퇴근합니다.
+- **사용량:** 이름표 옆 게이지가 컨텍스트 사용량을 보여주고, 📊 패널에서 토큰 사용량을 볼 수 있습니다.
+- **다시보기:** 🎞에서 지난 세션을 다시 재생할 수 있습니다.
 
 ```
-Claude Code hook ──POST /events──▶ apps/server (Fastify :7420) ──WebSocket /ws──▶ apps/web (Next.js :7421)
+Claude Code ─(hook)→ 로컬 서버 :7420 ─(WebSocket)→ 브라우저 :7421
 ```
 
-## 구조
+모든 것이 내 PC 안에서만 돕니다. 서버는 `127.0.0.1`에만 열리고, 프롬프트나 코드 같은 내용은 보내지도 저장하지도 않습니다([개인정보](#개인정보)).
 
-| 경로 | 설명 |
-|---|---|
-| `packages/shared` | `OfficeEvent` 타입·zod 스키마, 상태 reducer(`office.ts`), WS 프로토콜 |
-| `apps/server` | 이벤트 수신·SQLite 저장, 방/세션 상태 관리, 퇴근 처리, WebSocket 브로드캐스트 |
-| `apps/web` | Three.js 3D 사무실(로비/집중 보기), 방 탭, 승인 대기 알림, 이벤트 로그 |
-| `hooks/` | Claude Code hook 스크립트 (의존성 없음) |
-| `scripts/` | hook 설치/제거, 시뮬레이터(`simulate.mjs`), 스크린샷(`screenshot.mjs`) |
+## 준비물
 
-## 실행
+- **Node.js 22.13 이상**(`node -v`로 확인). nvm을 쓴다면 `nvm install 22`.
+- **pnpm:** Node에 들어 있는 corepack으로 켭니다: `corepack enable`
+- **Claude Code**
+- **운영체제:** Windows의 WSL2(Ubuntu)에서 주로 쓰고 확인했습니다. Linux와 macOS도 같은 방법으로 동작합니다. Windows용 Node에서 직접 실행하는 것은 확인하지 않았습니다.
+
+## 설치
 
 ```bash
+git clone https://github.com/parkrocket/agent.git ai-office
+cd ai-office
 pnpm install
-pnpm dev            # server :7420 + web :7421
+pnpm hooks:install     # Claude Code에 hook 등록 (아래 "hook" 참고)
+pnpm start             # 서버와 웹을 백그라운드로 실행 (처음에는 빌드 때문에 1~2분)
 ```
 
-Windows 브라우저에서 http://localhost:7421 접속 (WSL2 localhost 포워딩).
-포워딩이 안 되면 `HOST=0.0.0.0 pnpm dev`로 실행.
+브라우저에서 **http://localhost:7421** 을 엽니다. WSL2라면 Windows 브라우저에서 그대로 열면 됩니다.
 
-실제 Claude 세션 없이 보려면 서버를 띄운 상태에서 시뮬레이터를 실행하세요. 시뮬레이션 이벤트도 DB에 저장되니, 데모는 임시 DB로 띄우는 것이 좋습니다.
+그다음 **Claude Code를 새로 시작**하세요. hook은 새로 시작한 세션부터 적용됩니다. 대화를 시작하면 사무실에 방이 생기고 팀장이 출근합니다.
+
+## 켜기 · 끄기 · 상태
+
+| 명령 | 하는 일 |
+|---|---|
+| `pnpm start` | 서버와 웹을 백그라운드로 켭니다. 웹 소스가 바뀌었으면 먼저 빌드합니다. 이미 켜져 있으면 상태만 보여줍니다. |
+| `pnpm stop` | 둘 다 끕니다. |
+| `pnpm restart` | 껐다가 다시 켭니다. |
+| `pnpm status` | 실행 여부, hook 설치 상태, 거부된 이벤트 수, DB·로그 위치를 보여줍니다. |
+
+```
+$ pnpm status
+AI 오피스 상태
+  서버  ● 실행 중  pid 75534  http://127.0.0.1:7420
+  웹    ● 실행 중  pid 75535  http://localhost:7421
+  이벤트 v1 (지원: 1)  거부: 버전 0 · 형식 0
+  hook  ✓ ~/.local/share/ai-office/hook (v1, 2c25fc0, 10/24 19:43 설치)
+  DB    ~/.local/share/ai-office/events.db
+  로그  ~/.local/share/ai-office/run
+```
+
+PC를 다시 켜면 `pnpm start`를 한 번 실행하세요. 기록은 DB에 남아 있어서 사무실 상태가 그대로 돌아옵니다.
+
+## hook 설치 · 제거
+
+hook은 Claude Code가 도구를 쓰거나 응답을 마칠 때마다 실행하는 작은 스크립트입니다. AI 오피스는 이 hook으로 이벤트를 받습니다.
 
 ```bash
-AI_OFFICE_DB=/tmp/ai-office-demo.db AI_OFFICE_OFF_DUTY_MIN=0.5 pnpm dev
-node scripts/simulate.mjs --projects 3 --sessions 2
+pnpm hooks:install --dry-run   # 바뀔 설정만 출력 (파일은 안 건드림)
+pnpm hooks:install             # 설치·업데이트
+pnpm hooks:uninstall           # 제거 (다른 hook은 그대로 둠)
 ```
+
+**설치하면 일어나는 일**
+- hook 스크립트를 `~/.local/share/ai-office/hook/`에 복사합니다.
+- `~/.claude/settings.json`에 그 사본을 등록합니다. 고치기 전에 `settings.json.bak-날짜-시각`으로 백업합니다.
+- 다시 설치하면 AI 오피스 항목만 교체되고, 직접 만든 다른 hook은 건드리지 않습니다.
+
+**설치할 때 알아둘 점**
+- hook은 비동기로 실행되고 항상 1.5초 안에 끝납니다. 서버가 꺼져 있어도 Claude Code를 막거나 느리게 하지 않습니다.
+- Claude Code는 복사본을 실행합니다. 그래서 이 저장소에서 브랜치를 바꾸거나 코드를 고쳐도 실행 중인 Claude 세션에는 영향이 없습니다. hook을 바꾸려면 `pnpm hooks:install`을 다시 실행하세요.
+- hook 명령에는 설치할 때 쓴 node의 절대경로가 들어갑니다. nvm으로 node 버전을 바꿨다면 다시 설치하세요.
+
+**제거하면 일어나는 일**
+- settings.json에서 AI 오피스 항목만 빼고, 복사본을 지웁니다.
+
+## 업데이트
+
+```bash
+git pull
+pnpm install
+pnpm hooks:install     # hook이 바뀌었을 수 있으니 항상
+pnpm restart           # 웹은 바뀐 게 있으면 자동으로 다시 빌드
+```
+
+서버는 예전 버전 hook이 보내는 이벤트도 받습니다. 그래도 hook과 서버는 같은 버전으로 맞춰 두는 것이 좋습니다. `pnpm status`에 "작업 폴더 hooks/와 다름"이나 "지원하지 않는 버전"이 보이면 위 순서대로 다시 하세요.
+
+## 다른 PC에 설치하기
+
+1. [준비물](#준비물)을 설치합니다(Node 22.13+, `corepack enable`, Claude Code).
+2. [설치](#설치)의 명령을 그대로 실행합니다. 설정이나 DB는 PC마다 따로 생깁니다.
+3. Claude Code를 새로 시작합니다.
+
+**옮길 수 있는 것**
+- 지난 기록을 옮기고 싶다면, 서버를 끈 상태에서 `~/.local/share/ai-office/events.db*` 파일들을 새 PC의 같은 위치로 복사합니다.
+- 모델 한도·단가를 바꿔 썼다면 `~/.config/ai-office/models.json`도 복사합니다.
+
+**설치 위치가 다를 때**
+- 저장소는 아무 폴더에 받아도 됩니다. hook은 복사본을 쓰므로 저장소 위치와 상관없습니다.
+
+**포트가 이미 쓰이고 있을 때**
+- `7420`과 `7421`을 다른 프로그램이 쓰고 있으면 `pnpm start`가 알려줍니다.
 
 ## 화면
 
-- **로비 / 집중 보기:** 로비는 건물 한 층 전체를 보여줍니다. 방을 클릭하거나 탭을 고르면 카메라가 그 방으로 다가가고, 방 밖을 클릭하면 로비로 돌아옵니다. 근무 중인 방이 3개 이상이면 자동으로 한 방에 집중합니다.
-  - 자동 모드는 지금 보는 방이 바쁜 동안 화면을 바꾸지 않습니다.
-- **방 탭:** 상태 점으로 방 상태를 보여줍니다.
-  - 빨강 깜빡임: 손 든 에이전트가 있음
-  - 초록: 작업 중
-  - 회색: 휴식
-  - 흐림: 모두 퇴근
-- **🔔 알림:** 켜면 에이전트가 손을 들 때(권한 승인·입력 대기) 브라우저 알림이 뜹니다. 알림을 클릭하면 그 방으로 이동합니다. 같은 대기로는 한 번만 뜨고, 대기 중에는 탭 제목이 "(!) AI 오피스"로 깜빡입니다.
-- **퇴근:** 마지막 이벤트 후 10분이 지나면 팀장과 직원이 문으로 나갑니다. 권한 승인을 기다리는 세션은 예외입니다.
+- **로비 / 집중 보기:** 로비는 건물 전체를 보여줍니다.
+  - 방을 클릭하거나 위쪽 탭을 고르면 그 방으로 다가가고, 방 밖을 클릭하면 로비로 돌아옵니다.
+  - 근무 중인 방이 3개 이상이면 자동으로 한 방에 집중합니다. 지금 보는 방이 바쁜 동안은 화면을 바꾸지 않습니다.
+- **방 탭의 점:** 빨강 깜빡임(손 든 에이전트 있음), 초록(작업 중), 회색(휴식), 흐림(모두 퇴근)
+- **🔔 알림:** 켜 두면 에이전트가 손을 들 때 브라우저 알림이 뜨고, 누르면 그 방으로 갑니다. 기다리는 동안에는 탭 제목이 "(!) AI 오피스"로 깜빡입니다.
+- **퇴근:** 마지막 활동 후 10분이 지나면 퇴근합니다. 승인을 기다리는 세션은 남아 있습니다.
+- **📊 사용량:** 오늘 합계, 방별·세션별 토큰, 모델 한도·단가를 보여줍니다.
+  - 비용 환산은 API 정가 기준 추정치이며 구독 요금제와는 무관합니다.
+  - "과거 기록 가져오기"(또는 `pnpm usage:import`)로 hook 설치 전 세션도 통계에 넣을 수 있습니다.
+- **🎞 다시보기:** 지난 세션(이벤트 보관 7일)을 골라 재생합니다.
+  - 1x/4x/16x로 재생하고, 타임라인으로 원하는 시점에 갑니다.
+  - 30초 넘게 조용했던 구간은 짧게 건너뜁니다.
+  - 재생 중에도 실제 세션 알림은 울립니다.
+  - 토큰 기록만 있고 hook 이벤트가 없는 세션은 "기록만"으로 흐리게 표시되며 재생할 수 없습니다.
 
-## 캐릭터 상태
+### 캐릭터 상태
 
-| 상태 | 언제 | 화면 |
+| 상태 | 언제 | 모습 |
 |---|---|---|
 | 휴식 | 세션 시작 직후, 완료 후 30초 지남 | 고개 숙여 졸며 z, 회색 링 |
 | 생각 중 | 요청을 받았거나 도구 사이 | 말풍선 "…" |
 | 읽는 중 | Read / Grep / Glob / WebFetch / WebSearch | 고개 숙임, 파란 화면, 파란 링 |
 | 작성 중 | Edit / Write / NotebookEdit | 타이핑, 노란 화면, 노란 링 |
 | 실행 중 | Bash | 타이핑, 초록 터미널, 초록 링 |
-| 손 듦 | 권한 요청, 입력 대기 알림 | 손 들기 + "!" + 승인 대기 말풍선, 깜빡이는 빨간 링 |
-| 완료 | Stop | 끄덕이며 "완료!", 보라 링 |
+| 손 듦 | 권한 요청, 입력 대기 | 손 들기, "!" 표시, 승인 대기 말풍선, 깜빡이는 빨간 링 |
+| 완료 | 응답을 마침 | 끄덕이며 "완료!", 보라 링 |
 
-## 에셋
+## 문제 해결
 
-3D 모델은 [Kenney](https://kenney.nl)의 CC0(퍼블릭 도메인) 에셋을 씁니다. 각 폴더에 원본 `License.txt`가 들어 있습니다.
+| 증상 | 확인할 것 |
+|---|---|
+| 페이지가 안 열림 | `pnpm status`에서 웹이 실행 중인지 확인하세요. 꺼져 있으면 `pnpm start`. |
+| 페이지 오른쪽 위가 `closed` | 서버가 꺼져 있습니다. `pnpm status`를 확인하고 `pnpm restart`. |
+| 사무실이 비어 있음 | Claude Code를 hook 설치 **후에** 새로 시작했는지 확인하세요. `pnpm status`의 hook 줄이 ✓인지도 보세요. |
+| "지원하지 않는 버전" 경고 | hook과 서버 버전이 다릅니다. `pnpm hooks:install` 후 `pnpm restart`. |
+| `pnpm start`가 포트 사용 중이라고 함 | 개발 서버(`pnpm dev`)가 떠 있으면 끄세요. 다른 프로그램이면 그 프로그램을 끄세요. |
+| WSL2에서 Windows 브라우저로 접속이 안 됨 | WSL의 localhost 포워딩이 꺼져 있을 수 있습니다. `HOST=0.0.0.0 pnpm restart`로 실행해 보세요(같은 네트워크에 열리므로 주의). |
+| 실행 기록 | `~/.local/share/ai-office/run/server.log`, `web.log` |
 
-- [Furniture Kit](https://kenney.nl/assets/furniture-kit): 책상, 의자, 모니터, 벽, 문, 창문, 소품 (`apps/web/public/assets/kenney/furniture/`)
-- [Mini Characters](https://kenney.nl/assets/mini-characters): 팀장·직원 캐릭터와 애니메이션 (`apps/web/public/assets/kenney/characters/`)
-
-바닥 무늬와 모니터 화면은 코드로 그립니다.
-
-## hook 설치 / 제거
-
-```bash
-pnpm hooks:install --dry-run   # 결과만 출력, 파일 변경 없음
-pnpm hooks:install             # 백업(settings.json.bak-YYYYMMDD-HHmmss) 후 병합
-pnpm hooks:uninstall           # AI Office hook만 제거 (다른 hook은 유지)
-```
-
-설치 후 **새로 시작한** Claude Code 세션부터 적용됩니다.
+hook이 실제로 받는 입력을 보고 싶다면, `~/.claude/settings.json`의 hook 명령 앞에 `AI_OFFICE_DUMP=/tmp/hook.jsonl`을 붙이세요. 원본 JSON이 그 파일에 쌓입니다. 프롬프트 원문이 들어가니 확인이 끝나면 지우세요.
 
 ## 개인정보
 
-hook 스크립트(`hooks/sanitize.mjs`)가 화이트리스트 필드만 복사해서 전송합니다.
-전송: 이벤트 종류, session_id, cwd, 도구 이름, 파일 **basename**, agent id/type, notification_type 등.
-전송 안 함: 프롬프트, 파일 내용, Bash 명령, 도구 출력, 에러 메시지, 어시스턴트 메시지, transcript 경로.
-서버도 strict 스키마라 알 수 없는 필드가 오면 거부합니다.
+- **hook이 보내는 것:** hook(`hooks/sanitize.mjs`)은 다음 항목만 골라서 로컬 서버로 보냅니다.
+  - 이벤트 종류, 세션 ID, 작업 폴더 경로
+  - 도구 이름, 파일 **이름**(경로 아님)
+  - 에이전트 ID·종류, 알림 종류
+  - 대화 기록 파일의 **경로**
+- **hook이 보내지 않는 것:** 프롬프트, 응답, 생각, 코드, 파일 내용, Bash 명령, 도구 출력, 에러 메시지
+- **서버의 이중 확인:** 서버도 모르는 필드가 들어 있는 이벤트는 거부합니다.
+- **토큰 사용량:** 대화 기록(`~/.claude/projects/**/*.jsonl`)에서 **토큰 수, 모델, 시각만** 읽습니다. 파일은 읽기 전용으로 열고, 내용은 메모리에도 DB에도 남기지 않습니다.
 
-## Claude Code를 막지 않는 장치
+## 설정 (환경 변수)
 
-- 설정에 `"async": true` → 백그라운드 실행, Claude Code가 기다리지 않음
-- 전송 타임아웃 300ms, 전체 1.5초 강제 종료, stdout 출력 없음, 항상 exit 0
+`pnpm start`나 `pnpm restart` 앞에 붙여 씁니다. 예: `AI_OFFICE_OFF_DUTY_MIN=5 pnpm restart`
 
-## 토큰 사용량
+| 변수 | 기본값 | 용도 |
+|---|---|---|
+| `AI_OFFICE_OFF_DUTY_MIN` | `10` | 마지막 활동 후 퇴근까지(분) |
+| `AI_OFFICE_RETENTION_DAYS` | `7` | 이벤트(다시보기) 보관 기간 |
+| `AI_OFFICE_USAGE_RETENTION_DAYS` | `90` | 토큰 사용량 보관 기간 |
+| `AI_OFFICE_DB` | `~/.local/share/ai-office/events.db` | DB 위치 (`XDG_DATA_HOME`을 따름) |
+| `AI_OFFICE_MODELS_FILE` | `~/.config/ai-office/models.json` | 모델 한도·단가를 바꿀 파일 |
+| `CLAUDE_CONFIG_DIR` | `~/.claude` | Claude Code 설정 폴더 |
+| `HOST` | `127.0.0.1` | 서버·웹을 열 주소 |
+| `AI_OFFICE_URL` | `http://127.0.0.1:7420/events` | hook이 보낼 주소 (hook 명령 앞에 붙임) |
+| `AI_OFFICE_WEB_ORIGINS` | `http://localhost:7421,http://127.0.0.1:7421` | 서버가 허용하는 웹 주소 |
+| `NEXT_PUBLIC_AI_OFFICE_WS` | `ws://localhost:7420/ws` | 웹이 연결할 서버 주소 (빌드할 때 들어가며, 바꾸면 `pnpm start`가 다시 빌드함) |
 
-Claude Code 대화 기록(`~/.claude/projects/**/*.jsonl`)에서 **토큰 수만** 읽어 보여줍니다. 프롬프트, 응답, 코드 같은 내용은 읽지도 저장하지도 않고, 파일은 읽기 전용으로만 엽니다.
-
-- **컨텍스트 게이지:** 캐릭터 이름표 옆에 `12% · 120K`(모델 한도 대비 %와 실제 토큰 수)를 표시합니다. 80% 이상은 주황, 95% 이상은 빨강입니다.
-- **📊 사용량 패널:** 오늘 합계, 방별·세션별 누적, 모델 한도·단가 표를 보여줍니다. 비용 환산은 기본으로 꺼져 있고, 켜면 API 정가 기준 추정치와 단가 기준일을 함께 표시합니다(구독 요금제와는 무관).
-- **과거 기록 가져오기:** 패널의 버튼이나 `pnpm usage:import`로 hook 설치 전 세션까지 통계에 넣습니다. 몇 번 실행해도 중복되지 않습니다.
-- **한도·단가 바꾸기:** `config/models.default.json`이 기본값입니다(공식 문서 확인일 포함, 확인하지 못한 한도는 "미확인"). 바꾸고 싶은 값만 `~/.config/ai-office/models.json`에 같은 형태로 적고 서버를 다시 시작하세요.
+모델 한도·단가는 `config/models.default.json`이 기본값입니다. 바꿀 값만 `~/.config/ai-office/models.json`에 적고 `pnpm restart`하세요.
 
 ```json
 { "models": { "claude-opus-5-5": { "contextLimit": 500000 } } }
 ```
 
-## 환경 변수
+## 개발
 
-| 변수 | 기본값 | 용도 |
-|---|---|---|
-| `AI_OFFICE_DB` | `~/.local/share/ai-office/events.db` | 이벤트 DB 위치 (`XDG_DATA_HOME`을 따름) |
-| `AI_OFFICE_RETENTION_DAYS` | `7` | 이벤트 보관 기간 |
-| `AI_OFFICE_OFF_DUTY_MIN` | `10` | 마지막 이벤트 후 퇴근까지 시간(분, 소수 가능) |
-| `AI_OFFICE_USAGE_RETENTION_DAYS` | `90` | 토큰 사용량 보관 기간 |
-| `AI_OFFICE_MODELS_FILE` | `~/.config/ai-office/models.json` | 모델 한도·단가 덮어쓰기 파일 |
-| `CLAUDE_CONFIG_DIR` | `~/.claude` | Claude Code 설정 폴더(대화 기록은 그 아래 `projects/`) |
-| `AI_OFFICE_URL` | `http://127.0.0.1:7420/events` | hook 전송 주소 |
-| `AI_OFFICE_DUMP` | (없음) | 원본 hook JSON을 이 로컬 파일에 기록 (디버그용, 프롬프트 포함됨) |
-| `HOST` / `PORT` | `127.0.0.1` / `7420` | 서버 바인딩 |
-| `AI_OFFICE_WEB_ORIGINS` | `http://localhost:7421,http://127.0.0.1:7421` | CORS / WS 허용 origin |
-| `NEXT_PUBLIC_AI_OFFICE_WS` | `ws://localhost:7420/ws` | 웹이 연결할 WS 주소 |
+```bash
+pnpm dev          # 개발 모드 (server :7420 tsx watch + web :7421 next dev). pnpm start와 포트가 같으니 먼저 pnpm stop
+pnpm typecheck
+pnpm test
+AI_OFFICE_DB=/tmp/demo.db AI_OFFICE_OFF_DUTY_MIN=0.5 pnpm dev   # 임시 DB로 데모
+node scripts/simulate.mjs --projects 3 --sessions 2              # 가짜 세션 재생 (서버 실행 중일 때)
+```
+
+- **hook 고칠 때:** `hooks/`를 고친 뒤에는 `pnpm hooks:install`을 해야 Claude Code에 반영됩니다. 따로 시험하려면 `echo '{...}' | node hooks/ai-office-hook.mjs`처럼 직접 실행하세요.
+- **이벤트 필드를 바꿀 때:** `EVENT_VERSION`(`hooks/sanitize.mjs`)과 `SUPPORTED_EVENT_VERSIONS`(`packages/shared/src/events.ts`)를 함께 올립니다. 서버는 예전 버전을 계속 받아야 합니다.
+- **구조와 설계 원칙:** [CLAUDE.md](CLAUDE.md)에 있습니다.
+
+| 경로 | 설명 |
+|---|---|
+| `packages/shared` | 이벤트 스키마, 상태 reducer, 다시보기 엔진, WS 프로토콜 |
+| `apps/server` | 이벤트 수신·SQLite 저장, 사무실 상태, 토큰 사용량, 다시보기 API |
+| `apps/web` | Three.js 3D 사무실, 탭, 알림, 사용량 패널, 다시보기, 로그 |
+| `hooks/` | Claude Code hook (의존성 없는 plain node) |
+| `scripts/` | 켜기·끄기(`office.mjs`), hook 설치·제거, 시뮬레이터, 스크린샷 |
+
+## 에셋
+
+3D 모델은 [Kenney](https://kenney.nl)의 CC0(퍼블릭 도메인) 에셋입니다. 각 폴더에 원본 `License.txt`가 있습니다.
+
+- [Furniture Kit](https://kenney.nl/assets/furniture-kit): `apps/web/public/assets/kenney/furniture/`
+- [Mini Characters](https://kenney.nl/assets/mini-characters): `apps/web/public/assets/kenney/characters/`
+
+바닥 무늬와 모니터 화면은 코드로 그립니다.

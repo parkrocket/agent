@@ -8,6 +8,10 @@
   },
   "scripts": {
     "dev": "pnpm -r --parallel --filter \"./apps/*\" run dev",
+    "start": "node scripts/office.mjs start",
+    "stop": "node scripts/office.mjs stop",
+    "restart": "node scripts/office.mjs restart",
+    "status": "node scripts/office.mjs status",
     "build": "pnpm -r run build",
     "typecheck": "pnpm -r run typecheck",
     "test": "node --test \"hooks/*.test.mjs\" \"scripts/*.test.mjs\" && pnpm -r run test",

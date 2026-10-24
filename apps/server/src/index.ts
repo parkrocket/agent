@@ -29,5 +29,11 @@ const app = await buildServer({
   logLevel: process.env.LOG_LEVEL ?? "warn",
   usageRetentionMs: envNumber("AI_OFFICE_USAGE_RETENTION_DAYS", 90) * DAY_MS,
 });
+// `pnpm stop` sends SIGTERM: close cleanly so SQLite checkpoints its WAL.
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.once(signal, () => {
+    app.close().finally(() => process.exit(0));
+  });
+}
 await app.listen({ host, port });
 console.log(`[ai-office] server on http://${host}:${port}`);
