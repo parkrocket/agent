@@ -1,4 +1,5 @@
 import type { OfficeEvent } from "./events";
+import type { PlanLimits } from "./limits";
 import type { ModelConfig, TokenCounts } from "./models";
 import type { RoomMap, RoomState, SessionMap, SessionState } from "./office";
 import type { UsageRecord } from "./transcript";
@@ -21,13 +22,17 @@ export type ServerMessage =
       rooms: RoomMap;
       config: OfficeConfig;
       usage: UsageSnapshot;
+      /** Latest plan limits from the status line; null until one has reported. */
+      limits: PlanLimits | null;
     }
   /** One event plus the session and room it changed. */
   | { type: "event"; event: OfficeEvent; session: SessionState; room: RoomState }
   /** Full replacement after off-duty sweeps or pruning. */
   | { type: "state"; sessions: SessionMap; rooms: RoomMap }
   /** Token usage read from transcripts (throttled). */
-  | { type: "usage"; usage: UsageSnapshot };
+  | { type: "usage"; usage: UsageSnapshot }
+  /** A newer plan-limits report. */
+  | { type: "limits"; limits: PlanLimits };
 
 /** Recent events the server keeps for snapshots and the client keeps for the log. */
 export const MAX_RECENT_EVENTS = 500;

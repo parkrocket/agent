@@ -10,6 +10,12 @@ export const HOOK_MARKER = "ai-office-hook.mjs";
 /** The hook and everything it imports (plain node, no dependencies). Dependencies first, so a copy never runs half-updated. */
 export const HOOK_FILES = ["sanitize.mjs", HOOK_MARKER];
 
+/** The optional status line (plan limits). Installed and registered separately from the hook. */
+export const STATUSLINE_MARKER = "ai-office-statusline.mjs";
+export const STATUSLINE_FILES = ["limits.mjs", STATUSLINE_MARKER];
+/** Re-run every minute so the countdown and the office's report stay fresh while a session sits idle. */
+export const STATUSLINE_REFRESH_SEC = 60;
+
 export const HOOK_EVENTS = [
   "SessionStart",
   "SessionEnd",
@@ -45,12 +51,21 @@ export function hookCommand(nodePath = process.execPath, dir = installedHookDir(
   return `"${nodePath}" "${join(dir, HOOK_MARKER)}"`;
 }
 
+/** Where the installed status line lives (a separate copy, so either can be removed alone). */
+export function installedStatuslineDir(env = process.env) {
+  return join(dataDir(env), "statusline");
+}
+
+export function statuslineCommand(nodePath = process.execPath, dir = installedStatuslineDir()) {
+  return `"${nodePath}" "${join(dir, STATUSLINE_MARKER)}"`;
+}
+
 const sha256 = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 
 /** Content hashes of the hook files in a folder (missing files are absent). */
-export function hookHashes(dir) {
+export function hookHashes(dir, files = HOOK_FILES) {
   const out = {};
-  for (const f of HOOK_FILES) if (existsSync(join(dir, f))) out[f] = sha256(join(dir, f));
+  for (const f of files) if (existsSync(join(dir, f))) out[f] = sha256(join(dir, f));
   return out;
 }
 
@@ -69,28 +84,28 @@ function gitCommit(root) {
  * renamed over it, so a session firing mid-install runs either the old or the
  * new file, never a partial one. Records what was installed in version.json.
  */
-export function installHookFiles(dest = installedHookDir(), src = repoHookDir, root = repoRoot) {
+export function installHookFiles(dest = installedHookDir(), src = repoHookDir, root = repoRoot, files = HOOK_FILES, meta = { eventVersion: EVENT_VERSION }) {
   mkdirSync(dest, { recursive: true });
-  for (const f of HOOK_FILES) {
+  for (const f of files) {
     const tmp = join(dest, `.${f}.${process.pid}.tmp`);
     copyFileSync(join(src, f), tmp);
     renameSync(tmp, join(dest, f));
   }
   const version = {
-    eventVersion: EVENT_VERSION,
+    ...meta,
     commit: gitCommit(root),
     installedAt: new Date().toISOString(),
     from: src,
-    files: hookHashes(dest),
+    files: hookHashes(dest, files),
   };
   writeFileSync(join(dest, "version.json"), JSON.stringify(version, null, 2) + "\n");
   return version;
 }
 
 /** Deletes the installed copy (only our files; the folder goes too if that leaves it empty). */
-export function removeHookFiles(dest = installedHookDir()) {
+export function removeHookFiles(dest = installedHookDir(), files = HOOK_FILES) {
   if (!existsSync(dest)) return false;
-  for (const f of [...HOOK_FILES, "version.json"]) rmSync(join(dest, f), { force: true });
+  for (const f of [...files, "version.json"]) rmSync(join(dest, f), { force: true });
   if (readdirSync(dest).length === 0) rmdirSync(dest);
   return true;
 }
@@ -119,6 +134,40 @@ export function hookState(settings, dest = installedHookDir(), src = repoHookDir
     matchesRepo: HOOK_FILES.every((f) => installed[f] && installed[f] === repo[f]),
     version,
   };
+}
+
+/** Is our status line registered, and does the installed copy match the working tree? */
+export function statuslineState(settings, dest = installedStatuslineDir(), src = repoHookDir) {
+  const line = settings?.statusLine;
+  const command = typeof line?.command === "string" ? line.command : undefined;
+  const installed = hookHashes(dest, STATUSLINE_FILES);
+  const repo = hookHashes(src, STATUSLINE_FILES);
+  return {
+    /** Ours, someone else's, or none. */
+    registered: !command ? "none" : command.includes(STATUSLINE_MARKER) ? "ours" : "other",
+    copyPresent: Object.keys(installed).length === STATUSLINE_FILES.length,
+    matchesRepo: STATUSLINE_FILES.every((f) => installed[f] && installed[f] === repo[f]),
+  };
+}
+
+/**
+ * Sets our status line. Claude Code has a single statusLine slot, so a
+ * different one already there is kept (throws) unless `replace` is set; the
+ * settings backup keeps the old one either way. Pure.
+ */
+export function addOurStatusLine(settings, command = statuslineCommand(), { replace = false } = {}) {
+  const current = settings?.statusLine;
+  if (current && !String(current.command ?? "").includes(STATUSLINE_MARKER) && !replace) {
+    throw new Error(`이미 다른 상태 줄이 설정돼 있습니다 (${current.command ?? JSON.stringify(current)}). 바꾸려면 --replace를 붙이세요(기존 설정은 백업됩니다).`);
+  }
+  return { ...structuredClone(settings), statusLine: { type: "command", command, refreshInterval: STATUSLINE_REFRESH_SEC } };
+}
+
+/** Removes the status line only if it is ours. Pure. */
+export function removeOurStatusLine(settings) {
+  const next = structuredClone(settings);
+  if (String(next.statusLine?.command ?? "").includes(STATUSLINE_MARKER)) delete next.statusLine;
+  return next;
 }
 
 export function parseArgs(argv) {
@@ -191,7 +240,13 @@ export function run(transform, label, { beforeWrite, afterWrite } = {}) {
     console.error(`✗ ${settingsPath} 를 읽을 수 없어 중단합니다: ${err.message}`);
     process.exit(1);
   }
-  const next = transform(current);
+  let next;
+  try {
+    next = transform(current);
+  } catch (err) {
+    console.error(`✗ ${err.message}`);
+    process.exit(1);
+  }
   const before = JSON.stringify(current, null, 2);
   const after = JSON.stringify(next, null, 2);
 

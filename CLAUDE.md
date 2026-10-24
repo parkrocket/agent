@@ -16,7 +16,8 @@ Claude Code 세션을 3D 사무실 건물로 실시간 시각화하는 "AI 오�
    - **hook:** `hooks/sanitize.mjs`가 이벤트 종류, 세션 ID, cwd, 도구 이름, 파일 **basename**, 에이전트 ID/종류, 알림 종류, 대화 기록 **경로**만 새 객체로 복사한다. 원본 객체는 그대로 보내지 않는다. 그래서 원본 payload를 통째로 보내는 `type: "http"` hook은 쓰지 않는다.
    - **서버:** 2차 방어선으로 `OfficeEventSchema`가 `.strict()`라 모르는 필드가 들어오면 400으로 거부한다.
    - **대화 기록:** `parseUsageLine`이 토큰 수, 모델, 시각, ID, cwd만 복사한다. 원문은 메모리에도 DB에도 남기지 않는다. 파일은 읽기 전용으로만 연다.
-   - **테스트:** 원문 필드에 고유 문자열을 넣고, 결과에 남지 않는지 확인하는 유출 테스트를 기능마다 둔다(`hooks/sanitize.test.mjs`, `transcript.test.ts`, `usage.test.ts`).
+   - **상태 줄:** `hooks/limits.mjs`의 `extractLimits`가 `rate_limits`의 5시간·주간 사용률과 초기화 시각만 복사한다. 세션 ID·경로·모델·비용은 터미널 표시에만 쓰고 보내지 않는다.
+   - **테스트:** 원문 필드에 고유 문자열을 넣고, 결과에 남지 않는지 확인하는 유출 테스트를 기능마다 둔다(`hooks/sanitize.test.mjs`, `hooks/limits.test.mjs`, `transcript.test.ts`, `usage.test.ts`).
 2. **경로는 제한한다.** `/events`는 같은 PC의 아무 프로세스나 보낼 수 있다. 그래서 이벤트로 받은 경로는 믿지 않는다. 대화 기록은 `~/.claude/projects`(`CLAUDE_CONFIG_DIR`) 안의 `.jsonl`만, 심볼릭 링크를 따라간 실제 경로 기준으로 읽는다(`allowedTranscript`). 서버는 `127.0.0.1`에만 바인딩하고, WS는 origin을 검사하며, CORS는 웹 주소만 허용한다.
 3. **hook은 Claude Code를 절대 막거나 늦추지 않는다.**
    - **등록:** 설정에 `async: true, timeout: 5`로 등록한다.
@@ -52,6 +53,7 @@ pnpm usage:import                                              # 과거 대화 �
 pnpm --filter @ai-office/server dev   # 패키지 하나만
 pnpm hooks:install --dry-run          # ~/.claude/settings.json 병합 결과만 출력
 pnpm hooks:install / pnpm hooks:uninstall   # hook을 ~/.local/share/ai-office/hook/에 복사해 등록 / 등록 해제 후 사본 삭제
+pnpm statusline:install [--replace] / pnpm statusline:uninstall   # (선택) 요금제 한도 상태 줄을 .../statusline/에 복사해 statusLine으로 등록 / 해제
 ```
 
 - pnpm 12는 `pnpm -r <name>`을 `exec`로 해석하므로, 재귀 스크립트에는 반드시 `run`을 넣는다(`pnpm -r run build`).
@@ -103,17 +105,25 @@ async hook 때문에 생기는 경우도 처리한다:
 - **집계:** `UsageTracker`가 세션·에이전트별 누적, 현재 컨텍스트(마지막 요청의 input + cache_read + cache_write), 시간 단위 버킷(48시간)을 메모리 스냅샷으로 두고 `{type:"usage"}`로 1초에 최대 한 번 보낸다. 사용량 보관은 90일(`AI_OFFICE_USAGE_RETENTION_DAYS`)이다.
 - **모델 설정:** `config/models.default.json`(컨텍스트 한도, API 정가, 확인 출처·날짜)에 사용자 파일(`~/.config/ai-office/models.json` 또는 `AI_OFFICE_MODELS_FILE`)을 모델별로 합친다. 공식 문서로 확인하지 못한 한도는 `contextVerified: false`이고 화면에 "미확인"/"?"로 표시한다. Haiku 5.5처럼 프롬프트 길이에 따라 값이 다른 단가는 `priceOverThreshold`로 요청마다 판단한다.
 
+**요금제 한도** (`hooks/limits.mjs`, `hooks/ai-office-statusline.mjs`, `packages/shared/src/limits.ts`, `apps/server/src/routes/limits.ts`): Pro/Max의 5시간·주간 한도는 hook 입력에 없고 상태 줄 입력(`rate_limits`)에만 있다. 그래서 선택 설치하는 상태 줄 스크립트를 쓴다.
+- **스크립트:** 터미널에 `모델 · ctx % · 5h % (남은 시간) · 주간 % (초기화 시각)` 한 줄을 출력하고, `POST /limits`로 `PlanLimits {v, ts, fiveHour?, sevenDay?}`(시각은 epoch ms)를 보낸다. hook과 같은 규칙(1.5초 강제 종료, fetch 300ms, 항상 exit 0)을 따르되, stdout은 상태 줄 표시용이라 쓴다. 갱신은 Claude Code의 이벤트와 `refreshInterval: 60`초다.
+- **서버:** 스키마가 `.strict()`이고, 초기화 시각이 보고 시각에서 8일 넘게 떨어지면 거부한다. 계정 전체 값이라 `ts`가 가장 최근인 보고 하나만 남긴다(늦게 온 옛 보고는 무시). `kv` 테이블에 저장해 재시작해도 남고, `snapshot.limits`(없으면 null)와 `{type:"limits"}`로 보낸다.
+- **웹:** `LimitsBadge`(상단)와 사용량 패널 맨 위에 표시한다. 30초마다 다시 그려 남은 시간을 갱신하고, `resetsAt`이 지나면 "초기화됨", 보고가 15분 넘게 없으면 흐리게 한다. 색 기준은 컨텍스트 게이지와 같다(`limitLevel`).
+- **버전:** `LIMITS_VERSION`은 `hooks/limits.mjs`와 `limits.ts`에 있고 테스트가 비교한다.
+- **설치:** `statusLine`은 하나뿐이라, 다른 상태 줄이 있으면 `--replace` 없이는 멈춘다. 제거는 command에 `ai-office-statusline.mjs`가 있을 때만 한다. `pnpm status`가 설치 상태를 보여 준다.
+
 **서버** (`apps/server`): `app.ts`의 `buildServer(opts)`가 앱을 만들고, `index.ts`는 환경 변수를 읽어 listen만 한다. 테스트는 `buildServer`에 임시 DB를 넘기고 `inject`/`injectWS`로 검증한다.
 - **영속화:** 이벤트는 SQLite(`db.ts`, 내장 `node:sqlite`라 네이티브 빌드 없음)에 저장한다. 위치는 `AI_OFFICE_DB`이고, 기본값은 `$XDG_DATA_HOME` 또는 `~/.local/share/ai-office/events.db`다.
 - **기동 순서:** 보관 기간(`AI_OFFICE_RETENTION_DAYS`, 기본 7일)이 지난 이벤트 삭제 → 남은 이벤트를 `ts` 순으로 재생 → sweep → `compactPods`. 보관 기간 정리는 1시간마다 한 번 더 돈다.
 - **sweep 주기:** 30초마다 돌고, 바뀐 게 있으면 `{type:"state"}`(전체 sessions/rooms)를 보낸다. 퇴근 시간은 `AI_OFFICE_OFF_DUTY_MIN`(기본 10, 소수 가능)이다.
 - **WS 메시지:**
-  - `snapshot {events, sessions, rooms, config(offDutyMs, models), usage}`: 접속할 때
+  - `snapshot {events, sessions, rooms, config(offDutyMs, models), usage, limits}`: 접속할 때
   - `event {event, session, room}`: 이벤트마다
   - `state`: sweep이나 세션 정리 후
   - `usage`: 사용량 변화 시(1초에 최대 한 번)
+  - `limits`: 더 새로운 요금제 한도 보고가 왔을 때
   - 타입은 `packages/shared/src/protocol.ts`에 있다.
-- **HTTP:** `POST /events`(hook), `POST /usage/import`(과거 대화 기록 가져오기), `GET /history`(지난 세션 목록), `GET /history/:sessionId/events`(이벤트 + 메시지별 사용량), `GET /health`(이벤트 버전, 거부 수).
+- **HTTP:** `POST /events`(hook), `POST /limits`(상태 줄), `POST /usage/import`(과거 대화 기록 가져오기), `GET /history`(지난 세션 목록), `GET /history/:sessionId/events`(이벤트 + 메시지별 사용량), `GET /health`(이벤트 버전, 거부 수).
 - **origin 검사:** `/ws` route의 `preValidation`에서 403으로 막는다. `@fastify/websocket`의 `verifyClient` 옵션을 쓰면 `injectWS`가 끝나지 않아 테스트가 멈추기 때문이다. CORS도 같은 목록(`AI_OFFICE_WEB_ORIGINS`, 기본값 `localhost:7421`·`127.0.0.1:7421`)을 쓴다.
 - **그 밖:** 기본 로그 레벨은 `warn`(`LOG_LEVEL`)이다. 기본 바인딩은 `127.0.0.1`이고, WSL 포워딩이 안 될 때만 `HOST=0.0.0.0`을 쓴다.
 
@@ -188,6 +198,7 @@ async hook 때문에 생기는 경우도 처리한다:
 | 4 (2/2) | 세션 다시보기(브라우저 재생, 빈 구간 압축, 그 시각 기준 게이지) | #8 |
 | 실사용 | hook 사본 설치·이벤트 버전 검사, `pnpm start/stop/status`(프로덕션), README 정리 | #9 |
 | 안정화 | 서버 응답 정규화(버전 어긋남에도 페이지가 깨지지 않음) | #10 |
+| 한도 | 상태 줄로 요금제 5시간·주간 한도 표시(터미널·오피스) | #11 |
 
 ## 다음 할 일
 

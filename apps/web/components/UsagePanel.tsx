@@ -8,14 +8,17 @@ import {
   roomLabels,
   type AgentUsage,
   type ModelConfig,
+  type PlanLimits,
   type RoomMap,
   type SessionMap,
   type TokenCounts,
   type UsageSnapshot,
 } from "@ai-office/shared";
 import { formatDateTime, formatDuration } from "@/lib/format";
+import { limitRows, reportedText } from "@/lib/limits";
 import { SERVER_URL } from "@/lib/useOfficeSocket";
 import { todayTotals, totalTokens } from "@/lib/usage";
+import { useNow } from "./LimitsBadge";
 import styles from "./UsagePanel.module.css";
 
 const COST_KEY = "ai-office.showCost";
@@ -41,12 +44,14 @@ function Breakdown({ t }: { t: TokenCounts }) {
 /** Token usage read from Claude Code transcripts: today, per room, per session, plus the model table. */
 export function UsagePanel({
   usage,
+  limits,
   sessions,
   rooms,
   models,
   onClose,
 }: {
   usage: UsageSnapshot;
+  limits: PlanLimits | null;
   sessions: SessionMap;
   rooms: RoomMap;
   models?: ModelConfig;
@@ -54,6 +59,7 @@ export function UsagePanel({
 }) {
   const [showCost, setShowCost] = useState(false);
   const [importState, setImportState] = useState<string>();
+  const now = useNow();
 
   useEffect(() => {
     try {
@@ -113,6 +119,33 @@ export function UsagePanel({
           </>
         )}
       </p>
+
+      <section>
+        <h3>요금제 한도</h3>
+        {limits ? (
+          <>
+            <table className={styles.table}>
+              <tbody>
+                {limitRows(limits, now).map((r) => (
+                  <tr key={r.key} className={styles[r.level]}>
+                    <td>{r.label}</td>
+                    <td className={styles.meter}>
+                      <span style={{ width: `${Math.min(100, r.pct)}%` }} />
+                    </td>
+                    <td className={styles.num}>{r.reset ? "—" : `${Math.round(r.pct)}%`}</td>
+                    <td className={styles.num}>{r.resetText}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className={styles.note}>{reportedText(limits, now)} · Claude Code 상태 줄이 보고한 계정 전체 값입니다.</p>
+          </>
+        ) : (
+          <p className={styles.note}>
+            아직 보고가 없습니다. <code>pnpm statusline:install</code>로 상태 줄을 설치하면, Pro/Max 요금제의 5시간·주간 한도가 여기에 나옵니다.
+          </p>
+        )}
+      </section>
 
       <section>
         <h3>오늘</h3>

@@ -255,3 +255,60 @@ test("events with an unsupported version are refused with a clear reason and cou
   assert.equal(health.rejected.schema.count, 1);
   assert.deepEqual((await snapshot(app)).events.length, 1);
 });
+
+/** The real status line helper (plain JS, outside the TS project), to check its output against our schema. */
+async function hookLimits(): Promise<{ extractLimits: (raw: unknown, now?: number) => unknown }> {
+  const path: string = new URL("../../../hooks/limits.mjs", import.meta.url).href;
+  return import(path);
+}
+
+function limitsReport(ts: number, five = 23.5) {
+  return { v: 1, ts, fiveHour: { usedPercentage: five, resetsAt: ts + 60 * MIN }, sevenDay: { usedPercentage: 41, resetsAt: ts + 3 * DAY } };
+}
+
+test("POST /limits: the status line's report is broadcast, kept across restarts, and older ones ignored", async (t) => {
+  const dbPath = tempDb(t);
+  const first = await server(dbPath);
+  assert.equal((await snapshot(first)).limits, null, "nothing before the first report");
+
+  const { ws, messages } = await connect(first);
+  const now = Date.now();
+  // what the installed script actually sends must pass the server's schema
+  const { extractLimits } = await hookLimits();
+  const fromHook = extractLimits(
+    { session_id: "s", rate_limits: { five_hour: { used_percentage: 10, resets_at: now / 1000 + 3600 }, seven_day: { used_percentage: 20, resets_at: now / 1000 + 86400 } } },
+    now - 1000,
+  );
+  assert.equal((await first.inject({ method: "POST", url: "/limits", payload: fromHook as object })).statusCode, 204);
+  assert.equal((await first.inject({ method: "POST", url: "/limits", payload: limitsReport(now) })).statusCode, 204);
+  // a late, older report (another session's status line) doesn't win
+  assert.equal((await first.inject({ method: "POST", url: "/limits", payload: limitsReport(now - 5000, 99) })).statusCode, 204);
+  await new Promise((r) => setTimeout(r, 20));
+  ws.terminate();
+  const pushed = messages.filter((m) => m.type === "limits");
+  assert.equal(pushed.length, 2);
+  assert.deepEqual(pushed.at(-1), { type: "limits", limits: limitsReport(now) });
+  await first.close();
+
+  const second = await server(dbPath);
+  t.after(() => second.close());
+  assert.deepEqual((await snapshot(second)).limits, limitsReport(now));
+});
+
+test("POST /limits rejects extra fields and implausible values with 400", async (t) => {
+  const app = await server(tempDb(t));
+  t.after(() => app.close());
+  const now = Date.now();
+  for (const payload of [
+    { ...limitsReport(now), sessionId: "s1" },
+    { ...limitsReport(now), fiveHour: { usedPercentage: 5, resetsAt: now, cwd: "/x" } },
+    { ...limitsReport(now), fiveHour: { usedPercentage: -1, resetsAt: now } },
+    { ...limitsReport(now), sevenDay: { usedPercentage: 5, resetsAt: now + 30 * DAY } },
+    { v: 1, ts: now },
+    { ...limitsReport(now), v: 2 },
+  ]) {
+    const res = await app.inject({ method: "POST", url: "/limits", payload });
+    assert.equal(res.statusCode, 400, JSON.stringify(payload));
+  }
+  assert.equal((await snapshot(app)).limits, null);
+});

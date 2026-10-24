@@ -17,6 +17,8 @@
     "test": "node --test \"hooks/*.test.mjs\" \"scripts/*.test.mjs\" && pnpm -r run test",
     "hooks:install": "node scripts/install-hooks.mjs",
     "hooks:uninstall": "node scripts/uninstall-hooks.mjs",
+    "statusline:install": "node scripts/install-statusline.mjs",
+    "statusline:uninstall": "node scripts/uninstall-statusline.mjs",
     "usage:import": "node scripts/import-usage.mjs"
   },
   "devDependencies": {

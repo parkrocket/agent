@@ -24,7 +24,7 @@ import {
   serverDir,
   webDir,
 } from "./office-lib.mjs";
-import { HOOK_EVENTS, dataDir, hookState, installedHookDir, parseArgs, readSettings } from "./settings-lib.mjs";
+import { HOOK_EVENTS, dataDir, hookState, installedHookDir, installedStatuslineDir, parseArgs, readSettings, statuslineState } from "./settings-lib.mjs";
 
 const HOST = process.env.HOST ?? "127.0.0.1";
 const NAMES = ["server", "web"];
@@ -187,6 +187,14 @@ async function status() {
   else if (!hook.matchesRepo) console.log(`  hook  ⚠ 설치된 사본${detail}이 작업 폴더 hooks/와 다름 → 반영하려면 pnpm hooks:install`);
   else console.log(`  hook  ✓ ${home(installedHookDir())}${detail}`);
   if (hook.registered.length && hook.events < HOOK_EVENTS.length) console.log(`        일부 이벤트만 등록됨 (${hook.events}개) → pnpm hooks:install`);
+
+  // optional: without it the office just shows no plan limits
+  const line = statuslineState(settings);
+  if (line.registered === "none") console.log("  상태 줄 - 설치 안 됨 (선택: 요금제 한도 표시 → pnpm statusline:install)");
+  else if (line.registered === "other") console.log("  상태 줄 - 다른 상태 줄 사용 중 (요금제 한도 표시 안 됨)");
+  else if (!line.copyPresent) console.log(`  상태 줄 ✗ 등록은 됐지만 사본이 없음 (${home(installedStatuslineDir())}) → pnpm statusline:install`);
+  else if (!line.matchesRepo) console.log("  상태 줄 ⚠ 설치된 사본이 작업 폴더 hooks/와 다름 → 반영하려면 pnpm statusline:install");
+  else console.log(`  상태 줄 ✓ ${home(installedStatuslineDir())}`);
 
   console.log(`  DB    ${home(process.env.AI_OFFICE_DB || join(dataDir(), "events.db"))}`);
   console.log(`  로그  ${home(runDir())}`);

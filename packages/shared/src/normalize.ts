@@ -1,4 +1,5 @@
 import type { OfficeEvent } from "./events";
+import { PlanLimitsSchema, type PlanLimits } from "./limits";
 import type { ModelConfig, ModelInfo, TokenCounts } from "./models";
 import { DEFAULT_OFF_DUTY_MS, type AgentState, type RoomMap, type RoomState, type SessionMap, type SessionState } from "./office";
 import type { HistoryEvents, HistoryList, HistorySession, OfficeConfig, ServerMessage } from "./protocol";
@@ -128,6 +129,12 @@ export function normalizeConfig(v: unknown): OfficeConfig {
   return { offDutyMs: num(c.offDutyMs, DEFAULT_OFF_DUTY_MS), models: normalizeModels(c.models) };
 }
 
+/** Null when absent or not a valid report (a server that predates limits sends none). */
+export function normalizeLimits(v: unknown): PlanLimits | null {
+  const parsed = PlanLimitsSchema.safeParse(v);
+  return parsed.success ? parsed.data : null;
+}
+
 /** Events without the fields the reducer keys on are dropped. */
 function normalizeEvents(v: unknown): OfficeEvent[] {
   return arr<unknown>(v).filter(
@@ -150,6 +157,7 @@ export function normalizeServerMessage(raw: unknown): ServerMessage | undefined 
         rooms: normalizeRooms(raw.rooms),
         config: normalizeConfig(raw.config),
         usage: normalizeUsage(raw.usage),
+        limits: normalizeLimits(raw.limits),
       };
     case "event": {
       const [event] = normalizeEvents([raw.event]);
@@ -160,6 +168,10 @@ export function normalizeServerMessage(raw: unknown): ServerMessage | undefined 
       return { type: "state", sessions: normalizeSessions(raw.sessions), rooms: normalizeRooms(raw.rooms) };
     case "usage":
       return { type: "usage", usage: normalizeUsage(raw.usage) };
+    case "limits": {
+      const limits = normalizeLimits(raw.limits);
+      return limits ? { type: "limits", limits } : undefined;
+    }
     default:
       return undefined;
   }
