@@ -6,9 +6,9 @@ import {
   Replayer,
   advance,
   buildTimeline,
+  normalizeHistoryEvents,
   toReal,
   usageAt,
-  type HistoryEvents,
   type HistorySession,
   type ModelConfig,
   type OfficeState,
@@ -56,7 +56,7 @@ export function useReplay(offDutyMs: number, models: ModelConfig | undefined) {
       try {
         const res = await fetch(`${SERVER_URL}/history/${encodeURIComponent(session.sessionId)}/events`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const body = (await res.json()) as HistoryEvents;
+        const body = normalizeHistoryEvents(await res.json());
         const timeline = buildTimeline(body.events);
         playRef.current = 0;
         setPlayMs(0);

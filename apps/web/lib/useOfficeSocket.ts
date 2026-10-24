@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   MAX_RECENT_EVENTS,
+  normalizeServerMessage,
   type OfficeConfig,
   type OfficeEvent,
   type RoomMap,
@@ -44,20 +45,22 @@ export function useOfficeSocket() {
         setStatus("open");
       };
       socket.onmessage = (msg) => {
-        let data: ServerMessage;
+        let raw: unknown;
         try {
-          data = JSON.parse(msg.data as string) as ServerMessage;
+          raw = JSON.parse(msg.data as string);
         } catch (err) {
           console.warn("[ai-office] ignoring malformed WebSocket message", err);
           return;
         }
+        // fills fields an older or newer server leaves out, so a version mismatch can't break the page
+        const data: ServerMessage | undefined = normalizeServerMessage(raw);
         switch (data?.type) {
           case "snapshot":
             setEvents(data.events.slice(-MAX_RECENT_EVENTS));
             setSessions(data.sessions);
             setRooms(data.rooms);
             setConfig(data.config);
-            setUsage(data.usage ?? EMPTY_USAGE);
+            setUsage(data.usage);
             setLoaded(true);
             break;
           case "event":
@@ -73,7 +76,7 @@ export function useOfficeSocket() {
             setUsage(data.usage);
             break;
           default:
-            console.warn("[ai-office] ignoring unknown WebSocket message", data);
+            console.warn("[ai-office] ignoring unknown WebSocket message", raw);
         }
       };
       // The browser always fires close after error, and onclose handles the reconnect.

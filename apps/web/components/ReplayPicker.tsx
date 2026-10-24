@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { formatTokens, type HistoryList, type HistorySession } from "@ai-office/shared";
+import { formatTokens, normalizeHistoryList, type HistorySession } from "@ai-office/shared";
 import { formatDateTime, formatDuration } from "@/lib/format";
 import { totalTokens } from "@/lib/usage";
 import { SERVER_URL } from "@/lib/useOfficeSocket";
@@ -28,8 +28,8 @@ export function ReplayPicker({
     if (!open) return;
     setFetchError(undefined);
     fetch(`${SERVER_URL}/history`)
-      .then((res) => (res.ok ? (res.json() as Promise<HistoryList>) : Promise.reject(new Error(`HTTP ${res.status}`))))
-      .then((body) => setList(body.sessions))
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+      .then((body) => setList(normalizeHistoryList(body).sessions))
       .catch((err: Error) => setFetchError(`목록을 불러오지 못했습니다 (${err.message})`));
     const close = (e: MouseEvent) => {
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
