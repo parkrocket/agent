@@ -27,3 +27,13 @@
   padding: 3px 10px; font: inherit; cursor: pointer; white-space: nowrap;
 }
 .usageButton[aria-pressed="true"] { border-color: var(--accent); }
+/* Replay: a warm sepia office so it can't be mistaken for the live one. */
+.stage { position: absolute; inset: 0; }
+.replay { background: radial-gradient(ellipse at 50% 40%, #3d3324 0%, #231d15 55%, #120f0b 100%); }
+.replay .stage { filter: sepia(0.55) saturate(0.8); }
+.replayBand {
+  position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 4;
+  padding: 3px 12px; border-radius: 12px; font-size: 12px; white-space: nowrap; max-width: calc(100% - 16px);
+  overflow: hidden; text-overflow: ellipsis;
+  background: rgba(70, 48, 22, 0.9); color: #f6dcae; border: 1px solid #a07a44;
+}

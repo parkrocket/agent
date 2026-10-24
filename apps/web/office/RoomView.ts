@@ -307,7 +307,8 @@ export class RoomView {
     }
   }
 
-  tick(dtMs: number, now: number, detail: Detail, shown: boolean) {
+  /** `clock` is when states are judged (replay time during a replay); `now` is wall time for motion. */
+  tick(dtMs: number, now: number, detail: Detail, shown: boolean, clock = now) {
     const empty = this.activity === "empty" && this.agents.size === 0 && this.leaving.size === 0;
     if (empty !== this.dimmed) {
       this.dimmed = empty;
@@ -320,11 +321,11 @@ export class RoomView {
     for (const a of this.agents.values()) if (a.deskKey) occupied.set(a.deskKey, a);
     for (const [key, desk] of this.desks) {
       const a = occupied.get(key);
-      desk.screen.material = screenMaterial(a ? SCREEN_MODE[visualStatus(a.agent, now)] : "off");
+      desk.screen.material = screenMaterial(a ? SCREEN_MODE[visualStatus(a.agent, clock)] : "off");
     }
-    for (const a of this.agents.values()) a.update(dtMs, now, detail, shown);
+    for (const a of this.agents.values()) a.update(dtMs, now, detail, shown, clock);
     for (const a of this.leaving) {
-      a.update(dtMs, now, detail, shown);
+      a.update(dtMs, now, detail, shown, clock);
       if (a.done) {
         a.dispose();
         this.leaving.delete(a);
@@ -335,6 +336,8 @@ export class RoomView {
   dispose() {
     for (const a of [...this.agents.values(), ...this.leaving]) a.dispose();
     this.group.removeFromParent();
+    this.title.element.remove();
+    this.emptyLabel.element.remove();
     for (const m of this.materials.values()) m.dispose();
   }
 }

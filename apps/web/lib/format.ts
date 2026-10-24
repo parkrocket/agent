@@ -5,6 +5,21 @@ export function formatTime(ts: number): string {
   return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, "0")).join(":");
 }
 
+const pad = (n: number) => String(n).padStart(2, "0");
+
+/** "10/24 14:05" */
+export function formatDateTime(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** "42분", "1시간 5분"; under a minute in seconds. */
+export function formatDuration(ms: number): string {
+  if (ms < 60_000) return `${Math.round(ms / 1000)}초`;
+  const m = Math.round(ms / 60_000);
+  return m < 60 ? `${m}분` : `${Math.floor(m / 60)}시간 ${m % 60}분`;
+}
+
 export function formatAgent(e: OfficeEvent): string {
   return e.agent.kind === "main" ? "👔 main" : `🧑‍💻 ${e.agent.type ?? "sub"}:${e.agent.id.replace(/^agent-/, "").slice(0, 6)}`;
 }

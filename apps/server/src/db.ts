@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
-import { OfficeEventSchema, type OfficeEvent, type UsageRecord } from "@ai-office/shared";
+import { OfficeEventSchema, ZERO_TOKENS, type OfficeEvent, type TokenCounts, type UsageRecord } from "@ai-office/shared";
 import type { ReadPosition } from "./usage/reader";
 
 /** Default DB location, outside the repo: $XDG_DATA_HOME/ai-office or ~/.local/share/ai-office. */
@@ -29,6 +29,7 @@ export class EventDb {
         json TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS events_ts ON events (ts);
+      CREATE INDEX IF NOT EXISTS events_session ON events (session_id, ts);
 
       -- token usage per API message (numbers and ids only; never transcript text)
       CREATE TABLE IF NOT EXISTS usage_messages (
@@ -45,6 +46,7 @@ export class EventDb {
         cache_write_1h INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS usage_ts ON usage_messages (ts);
+      CREATE INDEX IF NOT EXISTS usage_session ON usage_messages (session_id, ts);
 
       -- how far each transcript has been read
       CREATE TABLE IF NOT EXISTS transcript_offsets (
@@ -117,24 +119,80 @@ export class EventDb {
 
   /** All stored usage, oldest first. */
   *allUsage(): Generator<UsageRecord> {
-    for (const row of this.db.prepare("SELECT * FROM usage_messages ORDER BY ts").iterate()) {
-      const r = row as Record<string, string | number | null>;
-      yield {
-        messageId: String(r.message_id),
-        sessionId: String(r.session_id),
-        ...(r.agent_id ? { agentId: String(r.agent_id) } : {}),
-        model: String(r.model),
-        ts: Number(r.ts),
-        ...(r.cwd ? { cwd: String(r.cwd) } : {}),
-        tokens: {
-          input: Number(r.input),
-          output: Number(r.output),
-          cacheRead: Number(r.cache_read),
-          cacheWrite5m: Number(r.cache_write_5m),
-          cacheWrite1h: Number(r.cache_write_1h),
-        },
-      };
+    for (const row of this.db.prepare("SELECT * FROM usage_messages ORDER BY ts").iterate()) yield usageRow(row);
+  }
+
+  /** One session's stored events in time order, for replay. */
+  sessionEvents(sessionId: string): OfficeEvent[] {
+    const rows = this.db.prepare("SELECT json FROM events WHERE session_id = ? ORDER BY ts, rowid").all(sessionId);
+    return rows.flatMap((row) => parse(row) ?? []);
+  }
+
+  /** One session's per-message usage (lead and staff) in time order. */
+  sessionUsage(sessionId: string): UsageRecord[] {
+    return this.db.prepare("SELECT * FROM usage_messages WHERE session_id = ? ORDER BY ts").all(sessionId).map(usageRow);
+  }
+
+  /**
+   * Past sessions, newest first: hook events (when kept) joined with transcript
+   * usage. Sessions known only from usage have `events: 0`.
+   */
+  historySessions(limit = 200): SessionSummary[] {
+    const byId = new Map<string, SessionSummary>();
+    const events = this.db
+      .prepare(
+        `SELECT session_id, MIN(ts) AS first, MAX(ts) AS last, COUNT(*) AS n,
+                (SELECT json_extract(json, '$.cwd') FROM events e2 WHERE e2.session_id = e.session_id ORDER BY ts LIMIT 1) AS cwd,
+                (SELECT json_extract(json, '$.project') FROM events e2 WHERE e2.session_id = e.session_id ORDER BY ts LIMIT 1) AS project
+         FROM events e GROUP BY session_id`,
+      )
+      .all() as { session_id: string; first: number; last: number; n: number; cwd: string | null; project: string | null }[];
+    for (const r of events) {
+      byId.set(r.session_id, {
+        sessionId: r.session_id,
+        ...(r.cwd ? { cwd: r.cwd } : {}),
+        ...(r.project ? { project: r.project } : {}),
+        startedAt: Number(r.first),
+        endedAt: Number(r.last),
+        events: Number(r.n),
+        tokens: ZERO_TOKENS,
+      });
     }
+    const usage = this.db
+      .prepare(
+        `SELECT session_id, MIN(ts) AS first, MAX(ts) AS last,
+                MIN(CASE WHEN agent_id IS NULL THEN cwd END) AS cwd,
+                SUM(input) AS input, SUM(output) AS output, SUM(cache_read) AS cache_read,
+                SUM(cache_write_5m) AS cache_write_5m, SUM(cache_write_1h) AS cache_write_1h
+         FROM usage_messages GROUP BY session_id`,
+      )
+      .all() as Record<string, string | number | null>[];
+    for (const r of usage) {
+      const id = String(r.session_id);
+      const tokens: TokenCounts = {
+        input: Number(r.input),
+        output: Number(r.output),
+        cacheRead: Number(r.cache_read),
+        cacheWrite5m: Number(r.cache_write_5m),
+        cacheWrite1h: Number(r.cache_write_1h),
+      };
+      const s = byId.get(id);
+      if (s) {
+        s.tokens = tokens;
+        s.startedAt = Math.min(s.startedAt, Number(r.first));
+        s.endedAt = Math.max(s.endedAt, Number(r.last));
+      } else {
+        byId.set(id, {
+          sessionId: id,
+          ...(r.cwd ? { cwd: String(r.cwd) } : {}),
+          startedAt: Number(r.first),
+          endedAt: Number(r.last),
+          events: 0,
+          tokens,
+        });
+      }
+    }
+    return [...byId.values()].sort((a, b) => b.startedAt - a.startedAt).slice(0, limit);
   }
 
   purgeUsageBefore(ts: number): number {
@@ -157,6 +215,35 @@ export class EventDb {
   close(): void {
     this.db.close();
   }
+}
+
+export interface SessionSummary {
+  sessionId: string;
+  cwd?: string;
+  project?: string;
+  startedAt: number;
+  endedAt: number;
+  events: number;
+  tokens: TokenCounts;
+}
+
+function usageRow(row: unknown): UsageRecord {
+  const r = row as Record<string, string | number | null>;
+  return {
+    messageId: String(r.message_id),
+    sessionId: String(r.session_id),
+    ...(r.agent_id ? { agentId: String(r.agent_id) } : {}),
+    model: String(r.model),
+    ts: Number(r.ts),
+    ...(r.cwd ? { cwd: String(r.cwd) } : {}),
+    tokens: {
+      input: Number(r.input),
+      output: Number(r.output),
+      cacheRead: Number(r.cache_read),
+      cacheWrite5m: Number(r.cache_write_5m),
+      cacheWrite1h: Number(r.cache_write_1h),
+    },
+  };
 }
 
 function parse(row: unknown): OfficeEvent | undefined {

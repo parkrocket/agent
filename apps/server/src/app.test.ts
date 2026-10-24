@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { OfficeEvent, ServerMessage } from "@ai-office/shared";
+import type { HistoryEvents, HistoryList, OfficeEvent, ServerMessage, UsageRecord } from "@ai-office/shared";
 import { buildServer, type ServerOptions } from "./app";
 import { EventDb } from "./db";
 import { loadModelConfig } from "./usage/models";
@@ -162,4 +162,76 @@ test("the off-duty sweep broadcasts a state message", async (t) => {
   assert.ok(state && state.type === "state", "a state message was sent");
   assert.equal(state.sessions.s1!.offDuty, true);
   assert.deepEqual(state.rooms["/home/u/shop"]!.pods, []);
+});
+
+const usageRec = (messageId: string, sessionId: string, ts: number, input: number, extra: Partial<UsageRecord> = {}): UsageRecord => ({
+  messageId,
+  sessionId,
+  model: "claude-opus-5-5",
+  ts,
+  tokens: { input, output: 10, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 },
+  ...extra,
+});
+
+test("GET /history lists past sessions with events and tokens; transcript-only ones are not replayable", async (t) => {
+  const dbPath = tempDb(t);
+  const now = Date.now();
+  const db = new EventDb(dbPath);
+  db.insert(event({ event: "UserPromptSubmit", sessionId: "old", ts: now - 60 * MIN }));
+  db.insert(event({ event: "Stop", sessionId: "old", ts: now - 50 * MIN }));
+  db.insert(event({ event: "UserPromptSubmit", sessionId: "cur", cwd: "/home/u/api", project: "api", ts: now - MIN }));
+  db.insertUsage(usageRec("m1", "old", now - 55 * MIN, 100));
+  db.insertUsage(usageRec("m2", "old", now - 52 * MIN, 200, { agentId: "a1" }));
+  db.insertUsage(usageRec("m3", "gone", now - 3 * DAY, 50, { cwd: "/home/u/legacy" }));
+  db.close();
+
+  const app = await server(dbPath, { now: () => now });
+  t.after(() => app.close());
+  const res = await app.inject({ method: "GET", url: "/history", headers: { origin: "http://localhost:7421" } });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.headers["access-control-allow-origin"], "http://localhost:7421");
+  const { sessions } = res.json() as HistoryList;
+  assert.deepEqual(sessions.map((s) => s.sessionId), ["cur", "old", "gone"], "newest first");
+  const [cur, old, gone] = sessions;
+  assert.equal(cur!.live, true);
+  assert.equal(cur!.project, "api");
+  assert.equal(old!.live, false);
+  assert.equal(old!.events, 2);
+  assert.equal(old!.startedAt, now - 60 * MIN);
+  assert.equal(old!.endedAt, now - 50 * MIN);
+  assert.equal(old!.tokens.input, 300, "lead and staff usage are summed");
+  assert.equal(old!.replayable, true);
+  assert.equal(gone!.replayable, false);
+  assert.equal(gone!.events, 0);
+  assert.equal(gone!.cwd, "/home/u/legacy");
+  assert.equal(gone!.project, "legacy");
+});
+
+test("GET /history/:id/events returns one session's events and usage in time order, 404 when none", async (t) => {
+  const dbPath = tempDb(t);
+  const now = Date.now();
+  const db = new EventDb(dbPath);
+  // stored out of order, as async hooks can deliver them
+  db.insert(event({ event: "Stop", sessionId: "s1", ts: now - 10 * MIN }));
+  db.insert(event({ event: "UserPromptSubmit", sessionId: "s1", ts: now - 20 * MIN }));
+  db.insert(event({ event: "UserPromptSubmit", sessionId: "other", ts: now - 15 * MIN }));
+  db.insertUsage(usageRec("m2", "s1", now - 12 * MIN, 2));
+  db.insertUsage(usageRec("m1", "s1", now - 18 * MIN, 1));
+  db.insertUsage(usageRec("m9", "other", now - 14 * MIN, 9));
+  db.insertUsage(usageRec("m5", "usageOnly", now - 14 * MIN, 5));
+  db.close();
+
+  const app = await server(dbPath, { now: () => now });
+  t.after(() => app.close());
+  const res = await app.inject({ method: "GET", url: "/history/s1/events" });
+  assert.equal(res.statusCode, 200);
+  const body = res.json() as HistoryEvents;
+  assert.deepEqual(body.events.map((e) => e.event), ["UserPromptSubmit", "Stop"]);
+  assert.ok(body.events.every((e) => e.sessionId === "s1"));
+  assert.deepEqual(body.usage.map((u) => u.messageId), ["m1", "m2"]);
+
+  assert.equal((await app.inject({ method: "GET", url: "/history/nope/events" })).statusCode, 404);
+  assert.equal((await app.inject({ method: "GET", url: "/history/usageOnly/events" })).statusCode, 404, "transcript-only: nothing to replay");
+  const long = (await app.inject({ method: "GET", url: `/history/${"x".repeat(300)}/events` })).statusCode;
+  assert.ok(long >= 400 && long < 500, `overlong id rejected (${long})`);
 });

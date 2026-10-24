@@ -1,6 +1,7 @@
 import type { OfficeEvent } from "./events";
-import type { ModelConfig } from "./models";
+import type { ModelConfig, TokenCounts } from "./models";
 import type { RoomMap, RoomState, SessionMap, SessionState } from "./office";
+import type { UsageRecord } from "./transcript";
 import type { UsageSnapshot } from "./usage";
 
 /** Server settings the client needs to draw correctly. */
@@ -33,3 +34,29 @@ export const MAX_RECENT_EVENTS = 500;
 
 export const DEFAULT_SERVER_PORT = 7420;
 export const DEFAULT_WEB_PORT = 7421;
+
+/** One past session in `GET /history` (newest first). */
+export interface HistorySession {
+  sessionId: string;
+  cwd?: string;
+  project?: string;
+  startedAt: number;
+  endedAt: number;
+  /** Stored hook events; 0 for a transcript-only ("기록만") session. */
+  events: number;
+  tokens: TokenCounts;
+  /** False when there are no hook events to replay (only transcript usage). */
+  replayable: boolean;
+  /** At work right now. */
+  live: boolean;
+}
+
+export interface HistoryList {
+  sessions: HistorySession[];
+}
+
+/** `GET /history/:sessionId/events`: the session's events and per-message usage, both in time order. */
+export interface HistoryEvents {
+  events: OfficeEvent[];
+  usage: UsageRecord[];
+}

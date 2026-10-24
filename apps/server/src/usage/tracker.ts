@@ -1,12 +1,9 @@
 import { existsSync, readdirSync, statSync, watch, type FSWatcher } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import {
-  MAIN_AGENT,
   ZERO_TOKENS,
+  addSessionUsage,
   addTokens,
-  messageCost,
-  promptTokens,
-  resolveModel,
   type ModelConfig,
   type UsageRecord,
   type UsageSnapshot,
@@ -149,29 +146,7 @@ export class UsageTracker {
   }
 
   private apply(r: UsageRecord) {
-    const s = (this.snapshot.sessions[r.sessionId] ??= {
-      sessionId: r.sessionId,
-      firstTs: r.ts,
-      lastTs: r.ts,
-      agents: {},
-    });
-    if (r.cwd && !r.agentId) s.cwd ??= r.cwd;
-    s.firstTs = Math.min(s.firstTs, r.ts);
-    s.lastTs = Math.max(s.lastTs, r.ts);
-
-    const model = resolveModel(this.models, r.model);
-    const cost = messageCost(model, r.tokens) ?? 0;
-    const key = r.agentId ?? MAIN_AGENT;
-    const a = (s.agents[key] ??= { tokens: ZERO_TOKENS, context: 0, model: r.model, lastTs: 0, messages: 0, cost: 0 });
-    a.tokens = addTokens(a.tokens, r.tokens);
-    a.messages++;
-    a.cost += cost;
-    if (r.ts >= a.lastTs) {
-      // the latest request's prompt size is how full the context window is now
-      a.lastTs = r.ts;
-      a.context = promptTokens(r.tokens);
-      a.model = r.model;
-    }
+    const cost = addSessionUsage(this.snapshot.sessions, r, this.models);
 
     const hour = Math.floor(r.ts / HOUR);
     const newest = Math.floor(Date.now() / HOUR);

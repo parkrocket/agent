@@ -172,10 +172,13 @@ export class Agent {
     return { x: this.root.position.x, z: this.root.position.z };
   }
 
-  /** `shown` false when the room is hidden: CSS2D labels only honour their own visibility, not their parents'. */
-  update(dtMs: number, now: number, detail: Detail, shown: boolean) {
+  /**
+   * `shown` false when the room is hidden: CSS2D labels only honour their own visibility, not their parents'.
+   * `clock` is the time the agent's state is judged at (the replay time during a replay); `now` drives the motion.
+   */
+  update(dtMs: number, now: number, detail: Detail, shown: boolean, clock = now) {
     const walking = this.step(dtMs);
-    const status = visualStatus(this.agent, now);
+    const status = visualStatus(this.agent, clock);
     const seated = this.mode === "seated" && this.deskYaw !== undefined;
 
     if (walking) {
@@ -184,7 +187,7 @@ export class Agent {
       const upper =
         status === "writing" || status === "running"
           ? "interact-right"
-          : status === "done" && now - this.agent.since < STRETCH_MS
+          : status === "done" && clock - this.agent.since < STRETCH_MS
             ? "emote-yes"
             : "idle";
       this.play("sit", upper);
@@ -207,7 +210,7 @@ export class Agent {
 
     const showUi = shown && !this.leaving;
     const talk = detail === "full" || (detail === "summary" && (this.lead || status === "waiting"));
-    const text = showUi && talk && !walking ? bubbleText(this.agent, status, now) : undefined;
+    const text = showUi && talk && !walking ? bubbleText(this.agent, status, clock, now) : undefined;
     const cls = `o3-bubble o3-${status}${text ? "" : " o3-hidden"}`;
     if (text !== undefined && text !== this.shown.bubble) {
       this.el.bubble.textContent = text.length > 26 ? `${text.slice(0, 25)}…` : text;
@@ -299,5 +302,7 @@ export class Agent {
     this.mixer.uncacheRoot(this.model);
     this.ring.material.dispose();
     this.root.removeFromParent();
+    // CSS2D cleans up only the object removed itself, not labels nested under it
+    this.label.element.remove();
   }
 }

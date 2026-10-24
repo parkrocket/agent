@@ -1,0 +1,53 @@
+.picker { position: relative; }
+.pickerButton {
+  background: #222733; color: var(--fg); border: 1px solid #3b4252; border-radius: 6px;
+  padding: 3px 10px; font: inherit; cursor: pointer; white-space: nowrap;
+}
+.pickerButton[aria-pressed="true"] { border-color: #d8a85f; color: #f2d29b; }
+.popover {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 20;
+  width: min(560px, calc(100vw - 32px)); max-height: 60vh; overflow-y: auto;
+  padding: 10px 12px; border-radius: 10px; font-size: 12px;
+  background: rgba(17, 20, 29, 0.97); border: 1px solid #2f3544; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+}
+.note { color: var(--muted); margin: 0 0 8px; line-height: 1.45; }
+.error { color: var(--err); margin: 0 0 8px; }
+.table { width: 100%; border-collapse: collapse; }
+.table th, .table td { padding: 4px; border-bottom: 1px solid #232836; text-align: left; white-space: nowrap; }
+.table th { color: var(--muted); font-weight: 500; }
+.num { text-align: right !important; font-variant-numeric: tabular-nums; }
+.dim { color: var(--muted); }
+.live { color: #a3e4a0; }
+.row { cursor: pointer; }
+.row:hover td { background: #1d2230; }
+.disabledRow { opacity: 0.45; cursor: not-allowed; }
+
+/* Replay bar, drawn over the (sepia) office */
+.bar {
+  position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 4;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 8px 12px; border-radius: 10px; font-size: 12px;
+  background: rgba(30, 24, 17, 0.92); border: 1px solid #5c4a30; color: #f0e2c8;
+}
+.bar button {
+  background: #3a2f22; color: inherit; border: 1px solid #6b5636; border-radius: 6px;
+  padding: 2px 8px; font: inherit; cursor: pointer;
+}
+.play { width: 34px; }
+.speeds { display: flex; gap: 2px; }
+.speeds button[aria-pressed="true"] { background: #b8873f; border-color: #e0b36b; color: #1d160d; font-weight: 700; }
+.track { position: relative; flex: 1 1 260px; min-width: 0; padding-top: 14px; }
+.gapLayer { position: absolute; left: 0; right: 0; top: 14px; height: 18px; pointer-events: none; }
+.gap {
+  position: absolute; top: 2px; height: 14px; min-width: 4px; border-radius: 2px;
+  background: repeating-linear-gradient(135deg, #a8844f 0 3px, transparent 3px 6px);
+  border-left: 1px solid #c79c5c; border-right: 1px solid #c79c5c;
+}
+.gap span {
+  position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
+  font-size: 10px; color: #d9bf91; white-space: nowrap;
+}
+.range { width: 100%; margin: 0; accent-color: #d8a85f; position: relative; }
+.ends { display: flex; justify-content: space-between; color: #a8977a; font-size: 10px; }
+.clock { font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 700; color: #ffe2a8; }
+.exit { margin-left: auto; }

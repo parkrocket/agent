@@ -22,8 +22,8 @@ export function visualStatus(agent: Pick<AgentState, "status" | "since">, now: n
 export const STRETCH_MS = 2_500;
 const DONE_BUBBLE_MS = 5_000;
 
-/** Speech bubble text for an agent, or undefined for no bubble. */
-export function bubbleText(agent: AgentState, status: AgentStatus, now: number): string | undefined {
+/** Speech bubble text for an agent, or undefined for no bubble. `anim` paces the thinking dots (wall time). */
+export function bubbleText(agent: AgentState, status: AgentStatus, now: number, anim = now): string | undefined {
   const target = [agent.tool, agent.file].filter(Boolean).join(" ");
   switch (status) {
     case "waiting":
@@ -33,7 +33,7 @@ export function bubbleText(agent: AgentState, status: AgentStatus, now: number):
     case "running":
       return target || agent.tool;
     case "thinking":
-      return target || ".".repeat(1 + (Math.floor(now / 400) % 3));
+      return target || ".".repeat(1 + (Math.floor(anim / 400) % 3));
     case "done":
       return now - agent.since < DONE_BUBBLE_MS ? "완료!" : undefined;
     default:

@@ -7,6 +7,7 @@ import { EventStore } from "./store";
 import { OfficeRegistry } from "./office";
 import { registerWs } from "./ws";
 import { registerEventRoutes } from "./routes/events";
+import { registerHistoryRoutes } from "./routes/history";
 import { loadModelConfig } from "./usage/models";
 import { projectsRoot } from "./usage/paths";
 import { UsageTracker } from "./usage/tracker";
@@ -80,6 +81,7 @@ export async function buildServer(opts: ServerOptions): Promise<FastifyInstance>
     broadcast: (event, update) => ws.broadcastEvent(event, update),
     onTranscript: (path) => usage.follow(path),
   });
+  registerHistoryRoutes(app, { db, office });
   app.get("/health", async () => ({ ok: true }));
   // Past transcripts (including sessions from before the hooks were installed) into the usage stats.
   app.post("/usage/import", async () => usage.importAll());
