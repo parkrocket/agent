@@ -1,6 +1,13 @@
 import { basename } from "node:path";
 import { randomUUID } from "node:crypto";
 
+/**
+ * Event format version (OfficeEvent.v). Bump it whenever a field is added or
+ * changed, together with SUPPORTED_EVENT_VERSIONS in packages/shared/src/events.ts:
+ * the server's strict schema rejects fields it doesn't know.
+ */
+export const EVENT_VERSION = 1;
+
 const FORWARDED_EVENTS = new Set([
   "SessionStart",
   "SessionEnd",
@@ -56,7 +63,7 @@ export function sanitize(raw, now = Date.now()) {
 
   const isTool = "tool_name" in raw;
   const result = {
-    v: 1,
+    v: EVENT_VERSION,
     id: randomUUID(),
     ts: now,
     event,

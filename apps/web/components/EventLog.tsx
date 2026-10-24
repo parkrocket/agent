@@ -20,7 +20,8 @@ export function EventLog({
   /** Label for the "only this room" filter; omitted in the lobby, where there's no single room. */
   scopeLabel?: string;
   inScope?: (e: OfficeEvent) => boolean;
-  onClear: () => void;
+  /** Omitted when there is nothing to clear (a replay shows its own events), which hides the button. */
+  onClear?: () => void;
   emptyText: string;
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -52,7 +53,7 @@ export function EventLog({
           <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} />
           자동 스크롤
         </label>
-        <button onClick={onClear}>지우기</button>
+        {onClear && <button onClick={onClear}>지우기</button>}
       </header>
       <div className={styles.log} ref={logRef} hidden={collapsed}>
         {shown.length === 0 && <p className={styles.empty}>{emptyText}</p>}

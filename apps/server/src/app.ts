@@ -1,10 +1,11 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
-import { MAX_RECENT_EVENTS, type ModelConfig } from "@ai-office/shared";
+import { EVENT_VERSION, MAX_RECENT_EVENTS, SUPPORTED_EVENT_VERSIONS, type ModelConfig } from "@ai-office/shared";
 import { EventDb } from "./db";
 import { EventStore } from "./store";
 import { OfficeRegistry } from "./office";
+import { newRejectionStats } from "./rejections";
 import { registerWs } from "./ws";
 import { registerEventRoutes } from "./routes/events";
 import { registerHistoryRoutes } from "./routes/history";
@@ -73,6 +74,7 @@ export async function buildServer(opts: ServerOptions): Promise<FastifyInstance>
     (msg, err) => app.log.warn({ err }, msg),
   );
 
+  const rejected = newRejectionStats();
   const ws = registerWs(app, store, office, { offDutyMs: opts.offDutyMs, models }, opts.webOrigins, () => usage.current);
   registerEventRoutes(app, {
     db,
@@ -80,9 +82,17 @@ export async function buildServer(opts: ServerOptions): Promise<FastifyInstance>
     office,
     broadcast: (event, update) => ws.broadcastEvent(event, update),
     onTranscript: (path) => usage.follow(path),
+    rejected,
   });
   registerHistoryRoutes(app, { db, office });
-  app.get("/health", async () => ({ ok: true }));
+  const startedAt = now();
+  app.get("/health", async () => ({
+    ok: true,
+    eventVersion: EVENT_VERSION,
+    supportedEventVersions: SUPPORTED_EVENT_VERSIONS,
+    startedAt,
+    rejected,
+  }));
   // Past transcripts (including sessions from before the hooks were installed) into the usage stats.
   app.post("/usage/import", async () => usage.importAll());
 

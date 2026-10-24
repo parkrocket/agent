@@ -108,3 +108,16 @@ test("transcript paths are forwarded as paths: the session's, or the sub-agent's
   assert.equal(sanitize({ ...base, transcript_path: "/etc/passwd", hook_event_name: "Stop" }).transcript, undefined, "only .jsonl paths");
   assert.equal(sanitize({ ...base, transcript_path: 42, hook_event_name: "Stop" }).transcript, undefined);
 });
+
+test("the hook's event version is one the server accepts", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { EVENT_VERSION } = await import("./sanitize.mjs");
+  // the hook can't import the TS package, so read the server's list from source
+  const src = readFileSync(new URL("../packages/shared/src/events.ts", import.meta.url), "utf8");
+  const supported = JSON.parse(src.match(/SUPPORTED_EVENT_VERSIONS: readonly number\[\] = (\[[^\]]*\])/)[1]);
+  const current = Number(src.match(/export const EVENT_VERSION = (\d+)/)[1]);
+  assert.equal(EVENT_VERSION, current, "hooks/sanitize.mjs and shared events.ts agree on the current version");
+  assert.ok(supported.includes(EVENT_VERSION));
+  const e = sanitize({ hook_event_name: "Stop", session_id: "s", cwd: "/x" });
+  assert.equal(e.v, EVENT_VERSION);
+});

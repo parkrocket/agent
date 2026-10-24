@@ -235,3 +235,23 @@ test("GET /history/:id/events returns one session's events and usage in time ord
   const long = (await app.inject({ method: "GET", url: `/history/${"x".repeat(300)}/events` })).statusCode;
   assert.ok(long >= 400 && long < 500, `overlong id rejected (${long})`);
 });
+
+test("events with an unsupported version are refused with a clear reason and counted in /health", async (t) => {
+  const app = await server(tempDb(t));
+  t.after(() => app.close());
+  for (const v of [2, "1", undefined]) {
+    const res = await app.inject({ method: "POST", url: "/events", payload: { ...event({ event: "Stop" }), v } });
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.json().error, "unsupported_version");
+    assert.deepEqual(res.json().supported, [1]);
+  }
+  await app.inject({ method: "POST", url: "/events", payload: { ...event({ event: "Stop" }), extra: 1 } });
+  assert.equal((await app.inject({ method: "POST", url: "/events", payload: event({ event: "Stop" }) })).statusCode, 204);
+
+  const health = (await app.inject({ method: "GET", url: "/health" })).json();
+  assert.equal(health.ok, true);
+  assert.equal(health.eventVersion, 1);
+  assert.equal(health.rejected.version.count, 3);
+  assert.equal(health.rejected.schema.count, 1);
+  assert.deepEqual((await snapshot(app)).events.length, 1);
+});

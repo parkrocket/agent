@@ -35,7 +35,8 @@ pnpm 12 (corepack). 루트에서 실행한다.
 
 ```bash
 pnpm install
-pnpm dev              # server(:7420, tsx watch) + web(:7421, next dev) 병렬 실행
+pnpm start / stop / restart / status   # 일상 실행: 서버 + 웹 프로덕션 빌드(.next-prod)를 백그라운드로 (scripts/office.mjs)
+pnpm dev              # 개발: server(:7420, tsx watch) + web(:7421, next dev). 포트가 같으니 먼저 pnpm stop
 pnpm typecheck        # 모든 패키지 tsc --noEmit
 pnpm test             # node:test(hooks/, scripts/) + 각 패키지 test(shared, server: tsx --test)
 node --test hooks/sanitize.test.mjs                                   # 파일 하나만
@@ -50,7 +51,7 @@ node scripts/simulate.mjs --transcripts /tmp/ch/projects       # 가짜 대화 �
 pnpm usage:import                                              # 과거 대화 기록을 사용량 통계로 가져오기
 pnpm --filter @ai-office/server dev   # 패키지 하나만
 pnpm hooks:install --dry-run          # ~/.claude/settings.json 병합 결과만 출력
-pnpm hooks:install / pnpm hooks:uninstall
+pnpm hooks:install / pnpm hooks:uninstall   # hook을 ~/.local/share/ai-office/hook/에 복사해 등록 / 등록 해제 후 사본 삭제
 ```
 
 - pnpm 12는 `pnpm -r <name>`을 `exec`로 해석하므로, 재귀 스크립트에는 반드시 `run`을 넣는다(`pnpm -r run build`).
@@ -64,6 +65,8 @@ Claude Code ─(stdin JSON)→ hooks/ai-office-hook.mjs ─POST /events→ apps/
 ```
 
 **필드를 추가할 때는 세 곳을 같이 고친다:** `hooks/sanitize.mjs`(추출), `packages/shared/src/events.ts`(스키마·타입), `hooks/sanitize.test.mjs`(유출 방지 테스트). 셋이 어긋나면 서버가 모든 이벤트를 400으로 거부하는데, hook은 실패를 무시하므로 증상이 조용히 "이벤트가 안 옴"으로만 나타난다.
+
+**이벤트 버전(`v`):** 설치된 hook은 사본이라 서버보다 오래되거나 새로울 수 있다. 필드를 추가·변경하면 `hooks/sanitize.mjs`의 `EVENT_VERSION`과 `events.ts`의 `EVENT_VERSION`·`SUPPORTED_EVENT_VERSIONS`를 함께 올리고(테스트가 둘을 비교한다), 서버는 예전 버전도 계속 받는다(스키마를 버전별 union으로). 서버는 `v`를 스키마보다 먼저 검사해 `unsupported_version`으로 거부하고, 거부 수를 `/health`의 `rejected`에 세며, `pnpm status`가 이를 경고로 보여준다.
 
 **이벤트 이름 목록은 세 곳에 중복돼 있다:** `packages/shared/src/events.ts`의 `HOOK_EVENT_NAMES`, `hooks/sanitize.mjs`의 `FORWARDED_EVENTS`, `scripts/settings-lib.mjs`의 `HOOK_EVENTS`(설치 대상).
 
@@ -110,7 +113,7 @@ async hook 때문에 생기는 경우도 처리한다:
   - `state`: sweep이나 세션 정리 후
   - `usage`: 사용량 변화 시(1초에 최대 한 번)
   - 타입은 `packages/shared/src/protocol.ts`에 있다.
-- **HTTP:** `POST /events`(hook), `POST /usage/import`(과거 대화 기록 가져오기), `GET /history`(지난 세션 목록), `GET /history/:sessionId/events`(이벤트 + 메시지별 사용량), `GET /health`.
+- **HTTP:** `POST /events`(hook), `POST /usage/import`(과거 대화 기록 가져오기), `GET /history`(지난 세션 목록), `GET /history/:sessionId/events`(이벤트 + 메시지별 사용량), `GET /health`(이벤트 버전, 거부 수).
 - **origin 검사:** `/ws` route의 `preValidation`에서 403으로 막는다. `@fastify/websocket`의 `verifyClient` 옵션을 쓰면 `injectWS`가 끝나지 않아 테스트가 멈추기 때문이다. CORS도 같은 목록(`AI_OFFICE_WEB_ORIGINS`, 기본값 `localhost:7421`·`127.0.0.1:7421`)을 쓴다.
 - **그 밖:** 기본 로그 레벨은 `warn`(`LOG_LEVEL`)이다. 기본 바인딩은 `127.0.0.1`이고, WSL 포워딩이 안 될 때만 `HOST=0.0.0.0`을 쓴다.
 
@@ -151,7 +154,9 @@ async hook 때문에 생기는 경우도 처리한다:
 - **화면:** 재생 세션의 방 하나만 있는 건물, 세피아 필터, "🎞 다시보기 중 · 실시간 아님" 띠, 하단 조작 막대(재생/일시정지, 1x/4x/16x, 타임라인, 실제 시각). 탭·알림을 누르면 다시보기를 나간다. 재생 중 캔버스 클릭은 무시한다.
 - **알림:** `useWaitingAlerts`는 실시간 `sessions`만 받으므로 재생 장면의 손 들기는 알림·제목 깜빡임을 만들지 않는다. 실제 세션 알림은 재생 중에도 울린다.
 
-**설치 스크립트** (`scripts/settings-lib.mjs`): 쓰기 전에 `settings.json.bak-<시각>`으로 백업한다. command 문자열에 `ai-office-hook.mjs`가 들어 있는지로 자기 항목을 식별하므로, 다시 설치하면 교체되고 제거할 때 다른 사용자 hook은 남는다. JSON을 파싱하지 못하면 덮어쓰지 않고 중단한다. `--settings <path>`로 다른 파일을 대상으로 지정할 수 있다. command에는 `process.execPath`로 얻은 node 절대경로가 들어가므로, nvm으로 node 버전을 바꾸면 다시 설치해야 한다.
+**설치 스크립트** (`scripts/settings-lib.mjs`): hook(`HOOK_FILES`)을 `~/.local/share/ai-office/hook/`(`XDG_DATA_HOME`)에 복사하고 그 사본을 등록한다. 그래서 작업 폴더에서 브랜치를 바꿔도 실행 중인 Claude 세션의 hook은 그대로이고, hook 변경은 `pnpm hooks:install`을 다시 해야 반영된다. 복사는 파일별로 임시 파일에 쓴 뒤 rename하고(실행 중인 hook이 반쯤 쓴 파일을 읽지 않게), 설치 내역은 `version.json`(이벤트 버전, 커밋, 파일 해시)에 남긴다. 설치는 복사 후 settings 쓰기, 제거는 settings 쓰기 후 사본 삭제 순서다. 설정 파일 쓰기 전에 `settings.json.bak-<시각>`으로 백업한다. command 문자열에 `ai-office-hook.mjs`가 들어 있는지로 자기 항목을 식별하므로, 다시 설치하면 교체되고 제거할 때 다른 사용자 hook은 남는다. JSON을 파싱하지 못하면 덮어쓰지 않고 중단한다. `--settings <path>`로 다른 파일을 대상으로 지정할 수 있다. command에는 `process.execPath`로 얻은 node 절대경로가 들어가므로, nvm으로 node 버전을 바꾸면 다시 설치해야 한다.
+
+**실행 스크립트** (`scripts/office.mjs`, 순수 부분은 `office-lib.mjs`): `pnpm start`는 서버(`node --import tsx`, watch 없음)와 웹(`next start`)을 detached 프로세스 그룹으로 띄우고 pid·로그를 `~/.local/share/ai-office/run/`에 둔다. 웹은 `AI_OFFICE_WEB_DIST=.next-prod`로 빌드해 `next dev`의 `.next`와 겹치지 않게 하고, 소스가 빌드보다 새롭거나 `NEXT_PUBLIC_*`(빌드에 박힘)가 바뀌었을 때만 다시 빌드한다. `next build`가 `next-env.d.ts`를 자기 출력 폴더로 바꿔 쓰므로 빌드 뒤 원래 내용으로 되돌린다. `pnpm stop`은 그룹에 SIGTERM(5초 뒤 SIGKILL)을 보내고, 서버는 SIGTERM에 `app.close()`로 DB를 닫는다. 포트가 이미 쓰이면(`pnpm dev`) 시작하지 않는다.
 
 ## 디버깅
 
@@ -165,8 +170,9 @@ async hook 때문에 생기는 경우도 처리한다:
 ## 작업 흐름
 
 - **브랜치와 PR:** 기능은 `main`에서 `feat/...` 브랜치를 따서 작업하고 PR로 올린다. 병합은 merge commit 방식이고, 병합한 브랜치는 지우지 않는다. 커밋 메시지와 PR 본문은 한국어로 쓴다.
-- **완료 기준:** `pnpm typecheck`, `pnpm test`, 웹 `next build`(개발 서버를 멈추고 실행, 끝나면 `apps/web/.next` 삭제 후 개발 서버 재시작), Playwright 스크린샷 확인까지 마친 뒤 PR을 올린다.
-- **브랜치 전환 주의:** `pnpm dev`의 `tsx watch`는 파일이 바뀌는 순간 서버를 다시 띄운다. `git checkout main` 후 `git pull`을 하면, 그 사이 잠깐 옛 코드로 서버가 떠서 웹과 프로토콜이 어긋날 수 있다(실제로 화면이 깨진 적 있음). 병합 뒤에는 `git fetch origin main:main && git checkout main`으로 전환하고, 의심되면 개발 서버를 다시 시작한다. hook도 작업 폴더의 코드를 그대로 실행하므로, hook과 서버는 항상 같은 브랜치 코드여야 한다.
+- **실행 환경:** 이 PC는 평소 `pnpm start`(프로덕션)로 돌고, hook은 설치된 사본이다. 개발할 때는 `pnpm stop` 후 `pnpm dev`, 끝나면 `pnpm dev`를 끄고 `pnpm start`로 되돌린다.
+- **완료 기준:** `pnpm typecheck`, `pnpm test`, 웹 빌드(개발 서버를 끈 뒤 `pnpm start`가 `.next-prod`로 빌드하는 것으로 확인), Playwright 스크린샷 확인까지 마친 뒤 PR을 올린다. hook을 고쳤다면 병합 후 `pnpm hooks:install`로 이 PC에 반영한다.
+- **브랜치 전환 주의:** `pnpm dev`의 `tsx watch`는 파일이 바뀌는 순간 서버를 다시 띄운다. `git checkout main` 후 `git pull`을 하면, 그 사이 잠깐 옛 코드로 서버가 떠서 웹과 프로토콜이 어긋날 수 있다(실제로 화면이 깨진 적 있음). 병합 뒤에는 `git fetch origin main:main && git checkout main`으로 전환하고, 의심되면 개발 서버를 다시 시작한다. `pnpm start`로 띄운 서버는 watch가 없어 브랜치 전환에 영향받지 않는다(바뀐 코드를 반영하려면 `pnpm restart`). hook은 사본이라 브랜치와 무관하다.
 
 ## 진행 상황
 
@@ -179,6 +185,7 @@ async hook 때문에 생기는 경우도 처리한다:
 | 건물 | 한 층짜리 건물(엘리베이터·공용 구역·복도), 출퇴근 동선 | #6 |
 | 4 (1/2) | 대화 기록 기반 토큰 사용량, 컨텍스트 게이지, 사용량 패널, 과거 기록 가져오기, 모델 한도·단가 설정 파일 | #7 |
 | 4 (2/2) | 세션 다시보기(브라우저 재생, 빈 구간 압축, 그 시각 기준 게이지) | #8 |
+| 실사용 | hook 사본 설치·이벤트 버전 검사, `pnpm start/stop/status`(프로덕션), README 정리 | #9 |
 
 ## 다음 할 일
 

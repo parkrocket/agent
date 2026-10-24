@@ -190,7 +190,7 @@ export function OfficeApp() {
           title={replay.active ? "이벤트 로그 · 다시보기" : undefined}
           scopeLabel={!replay.active && focused ? `${focused.label} 방만` : undefined}
           inScope={!replay.active && focused ? inRoom : undefined}
-          onClear={replay.active ? ignore : clearEvents}
+          onClear={replay.active ? undefined : clearEvents}
           emptyText={`이벤트 대기 중… (${WS_URL})`}
           collapsed={logCollapsed}
           onToggleCollapsed={toggleLog}
