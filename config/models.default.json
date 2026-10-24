@@ -1,0 +1,74 @@
+{
+  "$comment": "Context limits and API list prices (USD per million tokens). Copy entries into ~/.config/ai-office/models.json (or the file named by AI_OFFICE_MODELS_FILE) to override them; your file is merged over this one per model.",
+  "limitsSource": "https://platform.claude.com/docs/en/models/overview",
+  "limitsCheckedAt": "2026-10-24",
+  "pricesSource": "https://platform.claude.com/docs/en/about-claude/pricing",
+  "pricesAsOf": "2026-10-24",
+  "defaultContextLimit": 200000,
+  "models": {
+    "claude-fable-5-1": {
+      "contextLimit": 1000000,
+      "contextVerified": true,
+      "price": { "input": 10, "cacheWrite5m": 12.5, "cacheWrite1h": 20, "cacheRead": 0.25, "output": 50 }
+    },
+    "claude-opus-5-5": {
+      "contextLimit": 1000000,
+      "contextVerified": true,
+      "price": { "input": 4, "cacheWrite5m": 5, "cacheWrite1h": 8, "cacheRead": 0.2, "output": 20 }
+    },
+    "claude-sonnet-5-5": {
+      "contextLimit": 1000000,
+      "contextVerified": true,
+      "price": { "input": 2, "cacheWrite5m": 2.5, "cacheWrite1h": 4, "cacheRead": 0.1, "output": 10 }
+    },
+    "claude-haiku-5-5": {
+      "contextLimit": 1000000,
+      "contextVerified": true,
+      "price": { "input": 0.1, "cacheWrite5m": 0.125, "cacheWrite1h": 0.2, "cacheRead": 0.01, "output": 0.5 },
+      "priceOverThreshold": {
+        "promptTokens": 100000,
+        "input": 0.5, "cacheWrite5m": 0.625, "cacheWrite1h": 1, "cacheRead": 0.05, "output": 2.5
+      }
+    },
+    "claude-fable-5": {
+      "contextLimit": 1000000,
+      "contextVerified": false,
+      "price": { "input": 10, "cacheWrite5m": 12.5, "cacheWrite1h": 20, "cacheRead": 1, "output": 50 }
+    },
+    "claude-opus-5": {
+      "contextLimit": 1000000,
+      "contextVerified": false,
+      "price": { "input": 5, "cacheWrite5m": 6.25, "cacheWrite1h": 10, "cacheRead": 0.5, "output": 25 }
+    },
+    "claude-opus-4-8": {
+      "contextLimit": 1000000,
+      "contextVerified": false,
+      "price": { "input": 5, "cacheWrite5m": 6.25, "cacheWrite1h": 10, "cacheRead": 0.5, "output": 25 }
+    },
+    "claude-opus-4-7": {
+      "contextLimit": 1000000,
+      "contextVerified": false,
+      "price": { "input": 5, "cacheWrite5m": 6.25, "cacheWrite1h": 10, "cacheRead": 0.5, "output": 25 }
+    },
+    "claude-opus-4-6": {
+      "contextLimit": 1000000,
+      "contextVerified": false,
+      "price": { "input": 5, "cacheWrite5m": 6.25, "cacheWrite1h": 10, "cacheRead": 0.5, "output": 25 }
+    },
+    "claude-sonnet-5": {
+      "contextLimit": 1000000,
+      "contextVerified": false,
+      "price": { "input": 2, "cacheWrite5m": 2.5, "cacheWrite1h": 4, "cacheRead": 0.2, "output": 10 }
+    },
+    "claude-sonnet-4-6": {
+      "contextLimit": 1000000,
+      "contextVerified": false,
+      "price": { "input": 3, "cacheWrite5m": 3.75, "cacheWrite1h": 6, "cacheRead": 0.3, "output": 15 }
+    },
+    "claude-haiku-4-5": {
+      "contextLimit": 200000,
+      "contextVerified": false,
+      "price": { "input": 1, "cacheWrite5m": 1.25, "cacheWrite1h": 2, "cacheRead": 0.1, "output": 5 }
+    }
+  }
+}

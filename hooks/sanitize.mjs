@@ -23,6 +23,9 @@ const bool = (v) => (typeof v === "boolean" ? v : undefined);
 // Handles both POSIX and Windows-style separators.
 const fileName = (p) => (typeof p === "string" && p ? str(basename(p.replace(/\\/g, "/"))) : undefined);
 
+/** Transcript location (a path only, never its contents); the server reads usage numbers from it. */
+const transcriptPath = (p) => (typeof p === "string" && p.length <= 4096 && p.endsWith(".jsonl") ? p : undefined);
+
 /** Picks a file basename out of tool_input; never returns any other tool input. */
 function toolFile(input) {
   if (!input || typeof input !== "object") return undefined;
@@ -65,6 +68,8 @@ export function sanitize(raw, now = Date.now()) {
       tool: isTool ? str(raw.tool_name) : undefined,
       file: isTool ? toolFile(raw.tool_input) : undefined,
       toolUseId: str(raw.tool_use_id),
+      // SubagentStop points at the sub-agent's own transcript; every other event at the session's.
+      transcript: transcriptPath(raw.agent_transcript_path) ?? transcriptPath(raw.transcript_path),
     }),
   };
 

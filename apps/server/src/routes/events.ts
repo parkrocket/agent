@@ -11,6 +11,8 @@ export function registerEventRoutes(
     store: EventStore;
     office: OfficeRegistry;
     broadcast: (event: OfficeEvent, update: OfficeUpdate) => void;
+    /** Called with each event's transcript path (after replying) so usage can be read from it. */
+    onTranscript?: (path: string) => void;
   },
 ) {
   app.post("/events", async (request, reply) => {
@@ -26,6 +28,16 @@ export function registerEventRoutes(
       deps.store.add(event);
       deps.broadcast(event, deps.office.apply(event));
       app.log.debug({ event: event.event, tool: event.tool }, "event");
+      if (event.transcript && deps.onTranscript) {
+        const path = event.transcript;
+        setImmediate(() => {
+          try {
+            deps.onTranscript!(path);
+          } catch (err) {
+            app.log.error({ err, sessionId: event.sessionId }, "failed to follow transcript");
+          }
+        });
+      }
     } catch (err) {
       // Already replied, so this would otherwise vanish; log enough to reproduce.
       app.log.error({ err, event: event.event, sessionId: event.sessionId, eventId: event.id }, "failed to apply event");

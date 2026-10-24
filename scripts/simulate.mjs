@@ -8,6 +8,10 @@
 //   node scripts/simulate.mjs --projects 3 --sessions 2    # 3 projects × 2 sessions, concurrently
 //   options: --seed N  --speed 2  --prefix demo  --hold (no Stop at the end)
 //            --session ID --cwd PATH  (single-session mode only)
+//            --transcripts DIR  also write fake transcripts (token usage only) under DIR, which
+//                               should be the server's projects folder (CLAUDE_CONFIG_DIR/projects)
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { sanitize } from "../hooks/sanitize.mjs";
 
 const args = process.argv.slice(2);
@@ -20,6 +24,7 @@ const perProject = Number(opt("sessions", "1"));
 const speed = Number(opt("speed", "1"));
 const prefix = opt("prefix", "demo");
 const hold = args.includes("--hold");
+const transcripts = opt("transcripts", "");
 const url = process.env.AI_OFFICE_URL ?? "http://127.0.0.1:7420/events";
 
 // Small deterministic PRNG (mulberry32) so a seed replays the same show.
@@ -40,9 +45,51 @@ const AGENT_TYPES = ["Explore", "Plan", "general-purpose", "code-reviewer"];
 
 let toolSeq = 0;
 
+/**
+ * Fake transcript writer: one assistant usage line per call, with a growing
+ * context so gauges move. Some sessions run hot to show the warning colours.
+ */
+function transcriptWriter(sessionId, cwd) {
+  if (!transcripts) return { path: undefined, subPath: () => undefined, bump: () => {} };
+  const dir = join(transcripts, cwd.replace(/[^A-Za-z0-9]/g, "-"));
+  const path = join(dir, `${sessionId}.jsonl`);
+  mkdirSync(join(dir, sessionId, "subagents"), { recursive: true });
+  const subPath = (agentId) => join(dir, sessionId, "subagents", `agent-${agentId}.jsonl`);
+  const hot = rand() < 0.5;
+  const context = new Map([["main", hot ? 760_000 : 40_000]]);
+  let n = 0;
+  const bump = (agentId) => {
+    const key = agentId ?? "main";
+    const prev = context.get(key) ?? 15_000;
+    const next = Math.min(990_000, prev + Math.round(between(8_000, hot && !agentId ? 45_000 : 20_000)));
+    context.set(key, next);
+    const line = {
+      type: "assistant",
+      sessionId,
+      ...(agentId ? { agentId, isSidechain: true } : {}),
+      timestamp: new Date().toISOString(),
+      cwd,
+      message: {
+        id: `msg_sim_${sessionId}_${++n}`,
+        role: "assistant",
+        model: "claude-opus-5-5",
+        usage: { input_tokens: 200, output_tokens: Math.round(between(100, 2_000)), cache_read_input_tokens: next - 2_200, cache_creation_input_tokens: 2_000 },
+      },
+    };
+    appendFileSync(agentId ? subPath(agentId) : path, JSON.stringify(line) + "\n");
+  };
+  return { path, subPath, bump };
+}
+
 function session(sessionId, cwd) {
+  const tx = transcriptWriter(sessionId, cwd);
   const send = async (raw) => {
-    const event = sanitize({ session_id: sessionId, cwd, permission_mode: "default", ...raw });
+    // usage grows as the agent works: a transcript line per tool start (and per prompt)
+    if (raw.hook_event_name === "PreToolUse" || raw.hook_event_name === "UserPromptSubmit") {
+      tx.bump(raw.agent_id ? raw.agent_id.replace(/^agent-/, "") : undefined);
+    }
+    const transcript = raw.hook_event_name === "SubagentStop" && raw.agent_id ? tx.subPath(raw.agent_id.replace(/^agent-/, "")) : tx.path;
+    const event = sanitize({ session_id: sessionId, cwd, permission_mode: "default", ...(transcript ? { transcript_path: transcript } : {}), ...raw });
     const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(event) });
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   };

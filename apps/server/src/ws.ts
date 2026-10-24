@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { WebSocket } from "ws";
-import type { OfficeConfig, OfficeEvent, OfficeState, OfficeUpdate, ServerMessage } from "@ai-office/shared";
+import type { OfficeConfig, OfficeEvent, OfficeState, OfficeUpdate, ServerMessage, UsageSnapshot } from "@ai-office/shared";
 import type { EventStore } from "./store";
 import type { OfficeRegistry } from "./office";
 
@@ -10,6 +10,7 @@ export function registerWs(
   office: OfficeRegistry,
   config: OfficeConfig,
   allowedOrigins: string[],
+  usage: () => UsageSnapshot,
 ) {
   const clients = new Set<WebSocket>();
 
@@ -22,7 +23,7 @@ export function registerWs(
   app.get("/ws", { websocket: true, preValidation: checkOrigin }, (socket) => {
     clients.add(socket);
     const { sessions, rooms } = office.state;
-    send(socket, { type: "snapshot", events: store.recent(), sessions, rooms, config });
+    send(socket, { type: "snapshot", events: store.recent(), sessions, rooms, config, usage: usage() });
     socket.on("close", () => clients.delete(socket));
     socket.on("error", () => clients.delete(socket));
   });
@@ -41,6 +42,9 @@ export function registerWs(
     },
     broadcastState(state: OfficeState) {
       broadcast({ type: "state", sessions: state.sessions, rooms: state.rooms });
+    },
+    broadcastUsage(snapshot: UsageSnapshot) {
+      broadcast({ type: "usage", usage: snapshot });
     },
   };
 }

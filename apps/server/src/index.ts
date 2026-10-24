@@ -27,6 +27,7 @@ const app = await buildServer({
   retentionMs: envNumber("AI_OFFICE_RETENTION_DAYS", 7) * DAY_MS,
   webOrigins,
   logLevel: process.env.LOG_LEVEL ?? "warn",
+  usageRetentionMs: envNumber("AI_OFFICE_USAGE_RETENTION_DAYS", 90) * DAY_MS,
 });
 await app.listen({ host, port });
 console.log(`[ai-office] server on http://${host}:${port}`);

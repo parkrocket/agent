@@ -44,6 +44,8 @@ export const OfficeEventSchema = z
     tool: short.optional(),
     file: short.optional(),
     toolUseId: short.optional(),
+    /** Path of the session's (or, on SubagentStop, the sub-agent's) JSONL transcript; used to find usage. */
+    transcript: z.string().max(4096).optional(),
     detail: z
       .object({
         source: short.optional(),
