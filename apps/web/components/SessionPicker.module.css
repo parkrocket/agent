@@ -1,5 +1,0 @@
-.picker { display: flex; align-items: center; gap: 6px; color: var(--muted); min-width: 0; }
-.picker select {
-  background: #222733; color: var(--fg); border: 1px solid #3b4252; border-radius: 4px;
-  padding: 2px 6px; font: inherit; max-width: min(60vw, 420px);
-}

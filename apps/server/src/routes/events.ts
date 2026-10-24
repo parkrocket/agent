@@ -1,13 +1,17 @@
 import type { FastifyInstance } from "fastify";
-import { OfficeEventSchema, type OfficeEvent, type SessionState } from "@ai-office/shared";
+import { OfficeEventSchema, type OfficeEvent, type OfficeUpdate } from "@ai-office/shared";
+import type { EventDb } from "../db";
 import type { EventStore } from "../store";
-import type { SessionRegistry } from "../sessions";
+import type { OfficeRegistry } from "../office";
 
 export function registerEventRoutes(
   app: FastifyInstance,
-  store: EventStore,
-  sessions: SessionRegistry,
-  broadcast: (event: OfficeEvent, session: SessionState) => void,
+  deps: {
+    db: EventDb;
+    store: EventStore;
+    office: OfficeRegistry;
+    broadcast: (event: OfficeEvent, update: OfficeUpdate) => void;
+  },
 ) {
   app.post("/events", async (request, reply) => {
     const parsed = OfficeEventSchema.safeParse(request.body);
@@ -18,8 +22,9 @@ export function registerEventRoutes(
     reply.code(204).send();
     const event = parsed.data;
     try {
-      store.add(event);
-      broadcast(event, sessions.apply(event));
+      deps.db.insert(event);
+      deps.store.add(event);
+      deps.broadcast(event, deps.office.apply(event));
       app.log.debug({ event: event.event, tool: event.tool }, "event");
     } catch (err) {
       // Already replied, so this would otherwise vanish; log enough to reproduce.

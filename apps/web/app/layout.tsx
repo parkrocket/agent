@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import "./globals.css";
 
-export const metadata = { title: "AI Office" };
+export const metadata = { title: "AI 오피스" };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (

@@ -258,7 +258,11 @@ export const CHAIR_W = 20;
 export const CHAIR_H = 16;
 
 /** Chair back, wider than a character's shoulders so it peeks out behind them. */
+const chairCache = new Map<boolean, Texture>();
+
 export function chairTexture(lead: boolean): Texture {
+  const cached = chairCache.get(lead);
+  if (cached) return cached;
   const [c, ctx] = canvas(CHAIR_W, CHAIR_H);
   const col = lead ? "#6b2f36" : "#3f4a63";
   px(ctx, 1, 1, 18, 14, col);
@@ -266,7 +270,9 @@ export function chairTexture(lead: boolean): Texture {
   px(ctx, 1, 14, 18, 1, shade(col, 0.7));
   if (lead) px(ctx, 1, 0, 18, 2, shade(col, 1.15));
   outline(ctx, CHAIR_W, CHAIR_H);
-  return toTexture(c);
+  const t = toTexture(c);
+  chairCache.set(lead, t);
+  return t;
 }
 
 export type ScreenMode = "off" | "idle" | "thinking" | "reading" | "writing" | "running" | "waiting";
@@ -315,18 +321,20 @@ export function monitorTexture(mode: ScreenMode, frame: number): Texture {
   return t;
 }
 
+let exclamation: Texture | undefined;
+
 export function exclamationTexture(): Texture {
+  if (exclamation) return exclamation;
   const [c, ctx] = canvas(6, 10);
   px(ctx, 1, 0, 4, 6, "#ffd23f");
   px(ctx, 1, 7, 4, 2, "#ffd23f");
   outline(ctx, 6, 10);
-  return toTexture(c);
+  exclamation = toTexture(c);
+  return exclamation;
 }
 
 // ---------------------------------------------------------------------- room
 
-export const ROOM_W = 352;
-export const ROOM_H = 208;
 export const WALL_H = 48;
 
 function plant(ctx: Ctx, x: number, y: number) {
@@ -340,73 +348,90 @@ function plant(ctx: Ctx, x: number, y: number) {
   px(ctx, x + 2, y + 5, 2, 2, "#57b866");
 }
 
-/** Static background: wall, windows, door, floor and decoration. */
-export function roomTexture(): Texture {
-  const [c, ctx] = canvas(ROOM_W, ROOM_H);
+function window_(ctx: Ctx, wx: number) {
+  px(ctx, wx, 10, 40, 24, "#efe9da");
+  px(ctx, wx + 2, 12, 36, 20, "#8ecae6");
+  px(ctx, wx + 2, 12, 36, 6, "#b5dcef");
+  px(ctx, wx + 19, 12, 2, 20, "#efe9da");
+  px(ctx, wx + 2, 21, 36, 2, "#efe9da");
+  px(ctx, wx + 6, 26, 8, 3, "#e9f5fb");
+}
+
+function whiteboard(ctx: Ctx, x: number) {
+  px(ctx, x, 9, 92, 28, "#9aa0ab");
+  px(ctx, x + 2, 11, 88, 24, "#f7f8fa");
+  px(ctx, x + 6, 15, 30, 2, "#4f8fd6");
+  px(ctx, x + 6, 20, 44, 2, "#d0607d");
+  px(ctx, x + 6, 25, 22, 2, "#5b9e4b");
+  px(ctx, x + 56, 14, 26, 14, "#ffe9a8");
+  px(ctx, x + 20, 35, 30, 2, "#7b818c");
+}
+
+const roomCache = new Map<string, Texture>();
+
+/**
+ * Static background for a room of size w×h: wall, door, floor and decoration.
+ * `pods` are pod origins; each gets a whiteboard on the wall and a rug under the lead desk.
+ */
+export function roomTexture(w: number, h: number, pods: { x: number; y: number }[]): Texture {
+  const key = `${w}x${h}|${pods.map((p) => `${p.x},${p.y}`).join(";")}`;
+  const cached = roomCache.get(key);
+  if (cached) return cached;
+  const [c, ctx] = canvas(w, h);
 
   // floor: wooden planks
-  for (let y = WALL_H; y < ROOM_H; y += 8) {
+  for (let y = WALL_H; y < h; y += 8) {
     const row = (y - WALL_H) / 8;
-    px(ctx, 0, y, ROOM_W, 8, row % 2 ? "#b88a5c" : "#bf9263");
-    px(ctx, 0, y + 7, ROOM_W, 1, "#9f744b");
-    for (let x = (row % 3) * 13; x < ROOM_W; x += 40) px(ctx, x, y, 1, 7, "#a57a4f");
+    px(ctx, 0, y, w, 8, row % 2 ? "#b88a5c" : "#bf9263");
+    px(ctx, 0, y + 7, w, 1, "#9f744b");
+    for (let x = (row % 3) * 13; x < w; x += 40) px(ctx, x, y, 1, 7, "#a57a4f");
   }
-  // rug under the lead desk
-  px(ctx, 136, 54, 80, 34, "#7a3b46");
-  px(ctx, 139, 57, 74, 28, "#93505a");
-  px(ctx, 141, 59, 70, 24, "#7a3b46");
+  // rug under each lead desk
+  for (const p of pods) {
+    px(ctx, p.x + 84, p.y + 12, 80, 34, "#7a3b46");
+    px(ctx, p.x + 87, p.y + 15, 74, 28, "#93505a");
+    px(ctx, p.x + 89, p.y + 17, 70, 24, "#7a3b46");
+  }
 
   // wall
-  px(ctx, 0, 0, ROOM_W, WALL_H, "#d7d2c4");
-  px(ctx, 0, 0, ROOM_W, 6, "#c5bfae");
-  px(ctx, 0, WALL_H - 5, ROOM_W, 5, "#8a6a4a");
-  px(ctx, 0, WALL_H - 5, ROOM_W, 1, "#a7835e");
+  px(ctx, 0, 0, w, WALL_H, "#d7d2c4");
+  px(ctx, 0, 0, w, 6, "#c5bfae");
+  px(ctx, 0, WALL_H - 5, w, 5, "#8a6a4a");
+  px(ctx, 0, WALL_H - 5, w, 1, "#a7835e");
 
-  // windows
-  for (const wx of [72, 232, 288]) {
-    px(ctx, wx, 10, 40, 24, "#efe9da");
-    px(ctx, wx + 2, 12, 36, 20, "#8ecae6");
-    px(ctx, wx + 2, 12, 36, 6, "#b5dcef");
-    px(ctx, wx + 19, 12, 2, 20, "#efe9da");
-    px(ctx, wx + 2, 21, 36, 2, "#efe9da");
-    px(ctx, wx + 6, 26, 8, 3, "#e9f5fb");
+  // a whiteboard above each first-row pod, windows in the gaps
+  const boards = pods.filter((p) => p.y < 100).map((p) => p.x + 78);
+  for (const bx of boards) whiteboard(ctx, bx);
+  for (let wx = 72; wx + 40 < w - 60; wx += 56) {
+    if (boards.every((bx) => wx + 40 < bx - 4 || wx > bx + 96)) window_(ctx, wx);
   }
-  // whiteboard
-  px(ctx, 130, 9, 92, 28, "#9aa0ab");
-  px(ctx, 132, 11, 88, 24, "#f7f8fa");
-  px(ctx, 136, 15, 30, 2, "#4f8fd6");
-  px(ctx, 136, 20, 44, 2, "#d0607d");
-  px(ctx, 136, 25, 22, 2, "#5b9e4b");
-  px(ctx, 186, 14, 26, 14, "#ffe9a8");
-  px(ctx, 150, 35, 30, 2, "#7b818c");
   // clock
-  px(ctx, 330, 12, 12, 12, "#f4f1e8");
-  px(ctx, 335, 14, 2, 5, "#2b2125");
-  px(ctx, 335, 18, 4, 1, "#2b2125");
+  px(ctx, w - 22, 12, 12, 12, "#f4f1e8");
+  px(ctx, w - 17, 14, 2, 5, "#2b2125");
+  px(ctx, w - 17, 18, 4, 1, "#2b2125");
 
-  // door (left wall), slightly open frame
+  // door (left wall)
   px(ctx, 14, 8, 24, WALL_H - 8, "#6b4a33");
   px(ctx, 16, 10, 20, WALL_H - 10, "#8d6443");
   px(ctx, 18, 12, 16, 12, "#9d7250");
   px(ctx, 18, 27, 16, 14, "#9d7250");
   px(ctx, 32, 28, 2, 3, "#e3c56b");
-  // doormat
   px(ctx, 12, WALL_H, 28, 6, "#5a6b4f");
 
-  // decoration
-  plant(ctx, 4, 186);
-  plant(ctx, 332, 186);
+  // decoration along the right wall and corners
+  plant(ctx, 4, h - 22);
+  plant(ctx, w - 20, h - 22);
   plant(ctx, 46, 30);
-  // water cooler
-  px(ctx, 318, 52, 14, 22, "#e6e9ef");
-  px(ctx, 320, 40, 10, 12, "#8ecae6");
-  px(ctx, 322, 58, 3, 2, "#4f8fd6");
-  // bookshelf
-  px(ctx, 296, 50, 18, 30, "#7a5536");
+  px(ctx, w - 34, 52, 14, 22, "#e6e9ef");
+  px(ctx, w - 32, 40, 10, 12, "#8ecae6");
+  px(ctx, w - 30, 58, 3, 2, "#4f8fd6");
+  px(ctx, w - 56, 50, 18, 30, "#7a5536");
   for (let i = 0; i < 3; i++) {
-    px(ctx, 298, 52 + i * 9, 14, 7, "#5c3e27");
-    ["#c8413f", "#4f8fd6", "#5b9e4b", "#d9b25f"].forEach((col, j) => px(ctx, 299 + j * 3, 53 + i * 9, 2, 6, col));
+    px(ctx, w - 54, 52 + i * 9, 14, 7, "#5c3e27");
+    ["#c8413f", "#4f8fd6", "#5b9e4b", "#d9b25f"].forEach((col, j) => px(ctx, w - 53 + j * 3, 53 + i * 9, 2, 6, col));
   }
 
-  return toTexture(c);
+  const t = toTexture(c);
+  roomCache.set(key, t);
+  return t;
 }

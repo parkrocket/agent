@@ -1,9 +1,13 @@
 #!/usr/bin/env node
-// Plays a scripted fake Claude Code session against the local server, so the
-// office can be demoed without a real session. Raw hook payloads go through
+// Plays scripted fake Claude Code sessions against the local server, so the
+// office can be demoed without real sessions. Raw hook payloads go through
 // the same sanitize() as the real hook.
-// Usage: node scripts/simulate.mjs [--speed 1] [--session demo-xxxx] [--cwd /path/project] [--until <step>]
-import { randomUUID } from "node:crypto";
+//
+// Usage:
+//   node scripts/simulate.mjs                              # one project, one session
+//   node scripts/simulate.mjs --projects 3 --sessions 2    # 3 projects × 2 sessions, concurrently
+//   options: --seed N  --speed 2  --prefix demo  --hold (no Stop at the end)
+//            --session ID --cwd PATH  (single-session mode only)
 import { sanitize } from "../hooks/sanitize.mjs";
 
 const args = process.argv.slice(2);
@@ -11,104 +15,142 @@ const opt = (name, fallback) => {
   const i = args.indexOf(`--${name}`);
   return i >= 0 && args[i + 1] ? args[i + 1] : fallback;
 };
+const projects = Number(opt("projects", "1"));
+const perProject = Number(opt("sessions", "1"));
 const speed = Number(opt("speed", "1"));
-const sessionId = opt("session", `demo-${randomUUID().slice(0, 8)}`);
-const cwd = opt("cwd", "/home/demo/projects/pixel-shop");
-const until = opt("until", "");
+const prefix = opt("prefix", "demo");
+const hold = args.includes("--hold");
 const url = process.env.AI_OFFICE_URL ?? "http://127.0.0.1:7420/events";
 
-let n = 0;
-const id = () => `toolu_sim_${++n}`;
+// Small deterministic PRNG (mulberry32) so a seed replays the same show.
+let seed = Number(opt("seed", String(Date.now() % 100000)));
+function rand() {
+  seed = (seed + 0x6d2b79f5) | 0;
+  let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+const pick = (list) => list[Math.floor(rand() * list.length)];
+const between = (lo, hi) => lo + rand() * (hi - lo);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms / speed));
 
-async function send(raw) {
-  const event = sanitize({ session_id: sessionId, cwd, permission_mode: "default", ...raw });
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(event),
-  });
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-}
+const PROJECTS = ["pixel-shop", "api-server", "docs-site", "mobile-app", "data-pipeline", "infra", "design-kit", "cli-tool"];
+const FILES = ["src/index.ts", "src/cart.ts", "src/api/users.ts", "README.md", "package.json", "src/db/schema.sql", "docs/설계.md", "test/cart.test.ts"];
+const AGENT_TYPES = ["Explore", "Plan", "general-purpose", "code-reviewer"];
 
-const sub = (agent_id, agent_type) => ({ agent_id, agent_type });
+let toolSeq = 0;
 
-async function tool(name, input, { agent = {}, ms = 800, deny = false, ask = false } = {}) {
-  const tool_use_id = id();
-  await send({ hook_event_name: "PreToolUse", tool_name: name, tool_input: input, tool_use_id, ...agent });
-  if (ask || deny) {
-    await send({ hook_event_name: "PermissionRequest", tool_name: name, tool_input: input, ...agent });
-    await send({ hook_event_name: "Notification", notification_type: "permission_prompt", message: "needs permission" });
-    await sleep(2500);
-    if (deny) return; // denied: no PostToolUse ever arrives
-  }
-  await sleep(ms);
-  await send({ hook_event_name: "PostToolUse", tool_name: name, tool_input: input, tool_use_id, duration_ms: ms, ...agent });
-}
+function session(sessionId, cwd) {
+  const send = async (raw) => {
+    const event = sanitize({ session_id: sessionId, cwd, permission_mode: "default", ...raw });
+    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(event) });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  };
+  const p = (f) => `${cwd}/${f}`;
 
-const p = (f) => `${cwd}/${f}`;
-
-const steps = {
-  async start() {
-    await send({ hook_event_name: "SessionStart", source: "startup", model: "claude-opus-5-5" });
-    await sleep(1200);
-    await send({ hook_event_name: "UserPromptSubmit", prompt: "장바구니 버그 고쳐줘" });
-    await sleep(1500);
-  },
-  async solo() {
-    await tool("Read", { file_path: p("src/cart.ts") });
-    await tool("Grep", { pattern: "total", path: p("src") });
-    await tool("Edit", { file_path: p("src/cart.ts"), old_string: "a", new_string: "b" }, { ms: 1500 });
-    await tool("Bash", { command: "pnpm test" }, { ms: 2000, ask: true });
-  },
-  async team() {
-    const leadAgent = id();
-    await send({ hook_event_name: "PreToolUse", tool_name: "Agent", tool_input: { prompt: "explore" }, tool_use_id: leadAgent });
-    const a = sub("agent-explore-1", "Explore");
-    const b = sub("agent-plan-2", "Plan");
-    await send({ hook_event_name: "SubagentStart", ...a });
-    await sleep(600);
-    await send({ hook_event_name: "SubagentStart", ...b });
-    await sleep(2500); // let them walk in
-    await Promise.all([
-      (async () => {
-        await tool("Glob", { pattern: "**/*.ts" }, { agent: a, ms: 1200 });
-        await tool("Read", { file_path: p("src/checkout/payment.ts") }, { agent: a, ms: 1800 });
-        await tool("Bash", { command: "rm -rf dist" }, { agent: a, deny: true });
-        await tool("Read", { file_path: p("README.md") }, { agent: a, ms: 1200 });
-      })(),
-      (async () => {
-        await sleep(400);
-        await tool("Read", { file_path: p("docs/설계.md") }, { agent: b, ms: 2200 });
-        await tool("Write", { file_path: p("plan.md"), content: "x" }, { agent: b, ms: 2500 });
-      })(),
-    ]);
-    await send({ hook_event_name: "SubagentStop", last_assistant_message: "done", ...b });
-    await sleep(1500);
-    await send({ hook_event_name: "SubagentStop", last_assistant_message: "done", ...a });
-    await send({ hook_event_name: "PostToolUse", tool_name: "Agent", tool_input: {}, tool_use_id: leadAgent, duration_ms: 9000 });
-  },
-  async parallel() {
-    // three parallel reads, finishing out of order
-    const ids = [id(), id(), id()];
-    const files = ["src/a.ts", "src/b.ts", "src/c.ts"];
-    for (let i = 0; i < 3; i++)
-      await send({ hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { file_path: p(files[i]) }, tool_use_id: ids[i] });
-    for (const i of [0, 2, 1]) {
-      await sleep(700);
-      await send({ hook_event_name: "PostToolUse", tool_name: "Read", tool_input: {}, tool_use_id: ids[i] });
+  async function tool(name, input, { agent = {}, ms = between(500, 1500), deny = false, ask = false } = {}) {
+    const tool_use_id = `toolu_sim_${++toolSeq}`;
+    await send({ hook_event_name: "PreToolUse", tool_name: name, tool_input: input, tool_use_id, ...agent });
+    if (ask || deny) {
+      await send({ hook_event_name: "PermissionRequest", tool_name: name, tool_input: input, ...agent });
+      await send({ hook_event_name: "Notification", notification_type: "permission_prompt", message: "needs permission" });
+      await sleep(between(2500, 4000));
+      if (deny) return; // denied: no PostToolUse ever arrives
     }
-  },
-  async finish() {
-    await sleep(800);
-    await send({ hook_event_name: "Stop", last_assistant_message: "고쳤습니다" });
-  },
-};
+    await sleep(ms);
+    await send({ hook_event_name: "PostToolUse", tool_name: name, tool_input: input, tool_use_id, duration_ms: Math.round(ms), ...agent });
+  }
 
-console.log(`session ${sessionId} → ${url}`);
-for (const [name, run] of Object.entries(steps)) {
-  console.log(`· ${name}`);
-  await run();
-  if (name === until) break;
+  const randomTool = (agent) =>
+    pick([
+      () => tool("Read", { file_path: p(pick(FILES)) }, { agent }),
+      () => tool("Grep", { pattern: "TODO", path: p("src") }, { agent }),
+      () => tool("Edit", { file_path: p(pick(FILES)), old_string: "a", new_string: "b" }, { agent, ms: between(1000, 2000) }),
+      () => tool("Bash", { command: "pnpm test" }, { agent, ms: between(1500, 3000) }),
+    ])();
+
+  const scenes = {
+    async solo() {
+      for (let i = 0; i < 3; i++) await randomTool({});
+    },
+    async ask() {
+      await tool("Read", { file_path: p(pick(FILES)) });
+      await tool("Bash", { command: "rm -rf dist" }, { ask: true, ms: 1500 });
+    },
+    async deny() {
+      await tool("Bash", { command: "git push --force" }, { deny: true });
+      await tool("Read", { file_path: p("README.md") });
+    },
+    async parallel() {
+      const ids = [0, 1, 2].map(() => `toolu_sim_${++toolSeq}`);
+      for (const id of ids) await send({ hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { file_path: p(pick(FILES)) }, tool_use_id: id });
+      for (const id of [ids[0], ids[2], ids[1]]) {
+        await sleep(600);
+        await send({ hook_event_name: "PostToolUse", tool_name: "Read", tool_input: {}, tool_use_id: id });
+      }
+    },
+    async team() {
+      const lead = `toolu_sim_${++toolSeq}`;
+      await send({ hook_event_name: "PreToolUse", tool_name: "Agent", tool_input: { prompt: "x" }, tool_use_id: lead });
+      const staff = Array.from({ length: 1 + Math.floor(rand() * 3) }, (_, i) => ({
+        agent_id: `agent-${sessionId}-${toolSeq}-${i}`,
+        agent_type: pick(AGENT_TYPES),
+      }));
+      for (const a of staff) {
+        await send({ hook_event_name: "SubagentStart", ...a });
+        await sleep(500);
+      }
+      await sleep(2500); // let them walk in
+      await Promise.all(
+        staff.map(async (a, i) => {
+          await sleep(i * 300);
+          const steps = 2 + Math.floor(rand() * 2);
+          for (let k = 0; k < steps; k++) await randomTool(a);
+          if (rand() < 0.3) await tool("Bash", { command: "npm publish" }, { agent: a, ask: true });
+          await send({ hook_event_name: "SubagentStop", last_assistant_message: "done", ...a });
+        }),
+      );
+      await send({ hook_event_name: "PostToolUse", tool_name: "Agent", tool_input: {}, tool_use_id: lead, duration_ms: 9000 });
+    },
+  };
+
+  return async function run() {
+    await send({ hook_event_name: "SessionStart", source: "startup", model: "claude-opus-5-5" });
+    await sleep(800);
+    await send({ hook_event_name: "UserPromptSubmit", prompt: "작업해줘" });
+    await sleep(1000);
+    const plan = ["solo", pick(["team", "ask", "parallel"]), pick(["team", "deny", "solo"])];
+    for (const name of plan) await scenes[name]();
+    if (hold) return;
+    await sleep(800);
+    await send({ hook_event_name: "Stop", last_assistant_message: "끝났습니다" });
+  };
 }
-console.log("done");
+
+const runs = [];
+if (projects === 1 && perProject === 1) {
+  const id = opt("session", `${prefix}-${Math.floor(rand() * 1e6).toString(36)}`);
+  const cwd = opt("cwd", `/home/demo/projects/${PROJECTS[0]}`);
+  runs.push({ id, cwd, delay: 0 });
+} else {
+  for (let pi = 0; pi < projects; pi++) {
+    for (let si = 0; si < perProject; si++) {
+      runs.push({
+        id: `${prefix}-p${pi}s${si}-${Math.floor(rand() * 1e4).toString(36)}`,
+        cwd: `/home/demo/projects/${PROJECTS[pi % PROJECTS.length]}${pi >= PROJECTS.length ? `-${pi}` : ""}`,
+        delay: between(0, 4000),
+      });
+    }
+  }
+}
+
+console.log(`seed ${seed} · ${runs.length} session(s) → ${url}`);
+await Promise.all(
+  runs.map(async (r) => {
+    await sleep(r.delay);
+    console.log(`· start ${r.id} (${r.cwd.split("/").at(-1)})`);
+    await session(r.id, r.cwd)();
+    console.log(`· done  ${r.id}`);
+  }),
+);
+console.log("all done");
