@@ -3,13 +3,18 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@12.15.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "pnpm -r --parallel --filter \"./apps/*\" run dev",
     "build": "pnpm -r run build",
     "typecheck": "pnpm -r run typecheck",
-    "test": "node --test \"hooks/*.test.mjs\" \"scripts/*.test.mjs\"",
+    "test": "node --test \"hooks/*.test.mjs\" \"scripts/*.test.mjs\" && pnpm -r run test",
     "hooks:install": "node scripts/install-hooks.mjs",
     "hooks:uninstall": "node scripts/uninstall-hooks.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.64.1"
   }
 }

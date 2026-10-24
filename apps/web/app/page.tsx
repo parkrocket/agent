@@ -1,5 +1,5 @@
-import { EventLog } from "@/components/EventLog";
+import { OfficeApp } from "@/components/OfficeApp";
 
 export default function Page() {
-  return <EventLog />;
+  return <OfficeApp />;
 }
