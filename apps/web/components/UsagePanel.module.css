@@ -29,3 +29,10 @@
   padding: 4px 10px; font: inherit; cursor: pointer;
 }
 .panel code { font-size: 11px; }
+/* plan limits: same palette as the context gauge */
+.meter { width: 45%; }
+.meter span { display: block; height: 6px; border-radius: 3px; background: #7fc8ff; min-width: 2px; }
+.warn td:nth-child(3) { color: #ffcf7a; }
+.warn .meter span { background: #f0a53b; }
+.danger td:nth-child(3) { color: #ff9a92; }
+.danger .meter span { background: #ff5a5f; }

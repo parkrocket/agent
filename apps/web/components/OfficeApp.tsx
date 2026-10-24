@@ -11,6 +11,7 @@ import { WS_URL, useOfficeSocket } from "@/lib/useOfficeSocket";
 import { useAlertSetting, useWaitingAlerts } from "@/lib/useWaitingAlerts";
 import { AlertToggle } from "./AlertToggle";
 import { EventLog } from "./EventLog";
+import { LimitsBadge } from "./LimitsBadge";
 import { ReplayBar } from "./ReplayBar";
 import { ReplayPicker } from "./ReplayPicker";
 import { RoomTabs } from "./RoomTabs";
@@ -25,7 +26,7 @@ const LOG_KEY = "ai-office.log";
 type View = string;
 
 export function OfficeApp() {
-  const { events, sessions, rooms, config, usage, loaded, status, clearEvents } = useOfficeSocket();
+  const { events, sessions, rooms, config, usage, limits, loaded, status, clearEvents } = useOfficeSocket();
   const [usageOpen, setUsageOpen] = useState(false);
   const [view, setView] = useState<View>("auto");
   const [logCollapsed, setLogCollapsed] = useState(false);
@@ -136,6 +137,7 @@ export function OfficeApp() {
           onRoom={choose}
         />
         <div className={styles.right}>
+          <LimitsBadge limits={limits} />
           {config && (
             <span className={styles.hint} title="마지막 이벤트 후 이 시간이 지나면 퇴근합니다 (AI_OFFICE_OFF_DUTY_MIN)">
               퇴근 {Math.round((config.offDutyMs / 60_000) * 10) / 10}분
@@ -181,7 +183,7 @@ export function OfficeApp() {
           </>
         )}
         {usageOpen && (
-          <UsagePanel usage={usage} sessions={sessions} rooms={rooms} models={config?.models} onClose={() => setUsageOpen(false)} />
+          <UsagePanel usage={usage} limits={limits} sessions={sessions} rooms={rooms} models={config?.models} onClose={() => setUsageOpen(false)} />
         )}
       </div>
       <div className={styles.log}>

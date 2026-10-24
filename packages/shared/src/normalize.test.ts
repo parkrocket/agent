@@ -31,7 +31,8 @@ test("a current server's state passes through unchanged", () => {
     models,
     2000,
   );
-  const snapshot = { type: "snapshot", events, ...office, config: { offDutyMs: 60_000, models }, usage };
+  const limits = { v: 1, ts: 1000, fiveHour: { usedPercentage: 5, resetsAt: 2000 }, sevenDay: { usedPercentage: 9, resetsAt: 3000 } };
+  const snapshot = { type: "snapshot", events, ...office, config: { offDutyMs: 60_000, models }, usage, limits };
   assert.deepEqual(normalizeServerMessage(JSON.parse(JSON.stringify(snapshot))), snapshot);
 });
 
@@ -44,7 +45,16 @@ test("snapshot from an older server: missing rooms, usage and config get empty v
     rooms: {},
     config: { offDutyMs: DEFAULT_OFF_DUTY_MS, models: { defaultContextLimit: 200_000, models: {} } },
     usage: { sessions: {}, hours: {} },
+    limits: null,
   });
+});
+
+test("plan limits: valid reports pass, anything else becomes null or is dropped", () => {
+  const limits = { v: 1, ts: 1000, fiveHour: { usedPercentage: 5, resetsAt: 2000 } };
+  assert.deepEqual(normalizeServerMessage({ type: "limits", limits }), { type: "limits", limits });
+  assert.equal(normalizeServerMessage({ type: "limits", limits: { v: 1, ts: 1000 } }), undefined);
+  const snap = normalizeServerMessage({ type: "snapshot", limits: { ...limits, v: 9 } });
+  assert.equal(snap?.type === "snapshot" && snap.limits, null);
 });
 
 test("nested state missing newer fields is filled so the renderer can iterate it", () => {

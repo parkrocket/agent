@@ -1,0 +1,12 @@
+/* Same palette as the context gauge (.o3-gauge in globals.css). */
+.badge { display: flex; align-items: center; gap: 12px; font-size: 12px; white-space: nowrap; }
+.stale { opacity: 0.55; }
+.item { display: flex; align-items: center; gap: 5px; }
+.label { color: var(--muted); }
+.bar { width: 42px; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.18); overflow: hidden; }
+.bar span { display: block; height: 100%; border-radius: 3px; background: #7fc8ff; }
+.reset { color: var(--muted); font-size: 11px; }
+.warn b { color: #ffcf7a; }
+.warn .bar span { background: #f0a53b; }
+.danger b { color: #ff9a92; }
+.danger .bar span { background: #ff5a5f; }

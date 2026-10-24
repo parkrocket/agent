@@ -15,6 +15,11 @@ import {
   HOOK_EVENTS,
   HOOK_FILES,
   HOOK_MARKER,
+  STATUSLINE_MARKER,
+  STATUSLINE_REFRESH_SEC,
+  addOurStatusLine,
+  removeOurStatusLine,
+  statuslineState,
 } from "./settings-lib.mjs";
 
 const CMD = '"/usr/bin/node" "/repo/hooks/ai-office-hook.mjs"';
@@ -117,4 +122,52 @@ test("hooks:install registers the copy, which keeps working when the working tre
   cli("uninstall-hooks.mjs");
   assert.deepEqual(JSON.parse(readFileSync(settingsPath, "utf8")), { theme: "dark" });
   assert.equal(existsSync(copy), false);
+});
+
+const LINE = '"/usr/bin/node" "/data/ai-office/statusline/ai-office-statusline.mjs"';
+
+test("status line: set, replaced on reinstall, removed only when ours", () => {
+  const out = addOurStatusLine({ theme: "dark" }, LINE);
+  assert.deepEqual(out, { theme: "dark", statusLine: { type: "command", command: LINE, refreshInterval: STATUSLINE_REFRESH_SEC } });
+  assert.deepEqual(addOurStatusLine(out, LINE), out, "idempotent");
+  assert.deepEqual(removeOurStatusLine(out), { theme: "dark" });
+
+  const theirs = { statusLine: { type: "command", command: "~/.claude/my-line.sh" } };
+  assert.throws(() => addOurStatusLine(theirs, LINE), /--replace/, "never silently takes over someone else's status line");
+  assert.equal(addOurStatusLine(theirs, LINE, { replace: true }).statusLine.command, LINE);
+  assert.deepEqual(removeOurStatusLine(theirs), theirs, "uninstall leaves a foreign one alone");
+});
+
+test("statusline:install copies and registers; refuses a foreign one; uninstall restores", (t) => {
+  const root = tempDir(t);
+  const env = { ...process.env, XDG_DATA_HOME: join(root, "data") };
+  const settingsPath = join(root, "settings.json");
+  const original = { theme: "dark", statusLine: { type: "command", command: "my-line.sh" } };
+  writeFileSync(settingsPath, JSON.stringify(original));
+  const cli = (script, ...args) =>
+    spawnSync(process.execPath, [join(repoHookDir, "..", "scripts", script), "--settings", settingsPath, ...args], { env, encoding: "utf8" });
+  const dir = join(root, "data", "ai-office", "statusline");
+
+  const refused = cli("install-statusline.mjs");
+  assert.equal(refused.status, 1);
+  assert.deepEqual(JSON.parse(readFileSync(settingsPath, "utf8")), original, "untouched");
+
+  assert.equal(cli("install-statusline.mjs", "--replace").status, 0);
+  const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  assert.ok(settings.statusLine.command.includes(join(dir, STATUSLINE_MARKER)));
+  assert.equal(JSON.parse(readFileSync(join(dir, "version.json"), "utf8")).limitsVersion, 1);
+  assert.deepEqual(statuslineState(settings, dir), { registered: "ours", copyPresent: true, matchesRepo: true });
+
+  // the copy runs on its own with the server down
+  const res = spawnSync(process.execPath, [join(dir, STATUSLINE_MARKER)], {
+    input: JSON.stringify({ model: { display_name: "Opus 5.5" } }),
+    env: { ...env, AI_OFFICE_LIMITS_URL: "http://127.0.0.1:9/limits" },
+    encoding: "utf8",
+  });
+  assert.equal(res.status, 0);
+  assert.equal(res.stdout, "Opus 5.5");
+
+  assert.equal(cli("uninstall-statusline.mjs").status, 0);
+  assert.deepEqual(JSON.parse(readFileSync(settingsPath, "utf8")), { theme: "dark" });
+  assert.equal(existsSync(dir), false);
 });

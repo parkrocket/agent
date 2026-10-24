@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
-import { OfficeEventSchema, ZERO_TOKENS, type OfficeEvent, type TokenCounts, type UsageRecord } from "@ai-office/shared";
+import { OfficeEventSchema, PlanLimitsSchema, ZERO_TOKENS, type OfficeEvent, type PlanLimits, type TokenCounts, type UsageRecord } from "@ai-office/shared";
 import type { ReadPosition } from "./usage/reader";
 
 /** Default DB location, outside the repo: $XDG_DATA_HOME/ai-office or ~/.local/share/ai-office. */
@@ -53,6 +53,12 @@ export class EventDb {
         path TEXT PRIMARY KEY,
         offset INTEGER NOT NULL,
         ino INTEGER NOT NULL
+      );
+
+      -- small single values that should survive a restart (e.g. the latest plan limits)
+      CREATE TABLE IF NOT EXISTS kv (
+        key TEXT PRIMARY KEY,
+        json TEXT NOT NULL
       );
     `);
     this.insertStmt = this.db.prepare("INSERT OR IGNORE INTO events (id, ts, session_id, json) VALUES (?, ?, ?, ?)");
@@ -210,6 +216,22 @@ export class EventDb {
     this.db
       .prepare("INSERT INTO transcript_offsets (path, offset, ino) VALUES (?, ?, ?) ON CONFLICT(path) DO UPDATE SET offset = excluded.offset, ino = excluded.ino")
       .run(path, pos.offset, pos.ino);
+  }
+
+  /** Latest plan limits report, or null (none yet, or a row the schema no longer accepts). */
+  getLimits(): PlanLimits | null {
+    const row = this.db.prepare("SELECT json FROM kv WHERE key = 'limits'").get() as { json: string } | undefined;
+    if (!row) return null;
+    try {
+      const parsed = PlanLimitsSchema.safeParse(JSON.parse(row.json));
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
+  }
+
+  setLimits(limits: PlanLimits): void {
+    this.db.prepare("INSERT INTO kv (key, json) VALUES ('limits', ?) ON CONFLICT(key) DO UPDATE SET json = excluded.json").run(JSON.stringify(limits));
   }
 
   close(): void {

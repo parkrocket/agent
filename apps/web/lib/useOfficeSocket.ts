@@ -6,6 +6,7 @@ import {
   normalizeServerMessage,
   type OfficeConfig,
   type OfficeEvent,
+  type PlanLimits,
   type RoomMap,
   type ServerMessage,
   type SessionMap,
@@ -27,6 +28,7 @@ export function useOfficeSocket() {
   const [rooms, setRooms] = useState<RoomMap>({});
   const [config, setConfig] = useState<OfficeConfig | undefined>();
   const [usage, setUsage] = useState<UsageSnapshot>(EMPTY_USAGE);
+  const [limits, setLimits] = useState<PlanLimits | null>(null);
   /** True once the first snapshot arrived (alerts use it to skip already-waiting agents). */
   const [loaded, setLoaded] = useState(false);
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
@@ -61,6 +63,7 @@ export function useOfficeSocket() {
             setRooms(data.rooms);
             setConfig(data.config);
             setUsage(data.usage);
+            setLimits(data.limits);
             setLoaded(true);
             break;
           case "event":
@@ -74,6 +77,9 @@ export function useOfficeSocket() {
             break;
           case "usage":
             setUsage(data.usage);
+            break;
+          case "limits":
+            setLimits(data.limits);
             break;
           default:
             console.warn("[ai-office] ignoring unknown WebSocket message", raw);
@@ -98,5 +104,5 @@ export function useOfficeSocket() {
     };
   }, []);
 
-  return { events, sessions, rooms, config, usage, loaded, status, clearEvents: () => setEvents([]) };
+  return { events, sessions, rooms, config, usage, limits, loaded, status, clearEvents: () => setEvents([]) };
 }

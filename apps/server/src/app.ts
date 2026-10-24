@@ -9,6 +9,7 @@ import { newRejectionStats } from "./rejections";
 import { registerWs } from "./ws";
 import { registerEventRoutes } from "./routes/events";
 import { registerHistoryRoutes } from "./routes/history";
+import { registerLimitsRoutes } from "./routes/limits";
 import { loadModelConfig } from "./usage/models";
 import { projectsRoot } from "./usage/paths";
 import { UsageTracker } from "./usage/tracker";
@@ -74,8 +75,11 @@ export async function buildServer(opts: ServerOptions): Promise<FastifyInstance>
     (msg, err) => app.log.warn({ err }, msg),
   );
 
+  // Plan limits from the status line (account-wide, latest report only).
+  let limits = db.getLimits();
+
   const rejected = newRejectionStats();
-  const ws = registerWs(app, store, office, { offDutyMs: opts.offDutyMs, models }, opts.webOrigins, () => usage.current);
+  const ws = registerWs(app, store, office, { offDutyMs: opts.offDutyMs, models }, opts.webOrigins, () => usage.current, () => limits);
   registerEventRoutes(app, {
     db,
     store,
@@ -85,6 +89,14 @@ export async function buildServer(opts: ServerOptions): Promise<FastifyInstance>
     rejected,
   });
   registerHistoryRoutes(app, { db, office });
+  registerLimitsRoutes(app, {
+    db,
+    current: () => limits,
+    set: (next) => {
+      limits = next;
+      ws.broadcastLimits(next);
+    },
+  });
   const startedAt = now();
   app.get("/health", async () => ({
     ok: true,
