@@ -1,0 +1,9 @@
+node_modules/
+.next/
+dist/
+*.tsbuildinfo
+.env*.local
+.env
+*.log
+.DS_Store
+*:Zone.Identifier

@@ -1,0 +1,15 @@
+{
+  "name": "ai-office",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.15.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "pnpm -r --parallel --filter \"./apps/*\" run dev",
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "node --test \"hooks/*.test.mjs\" \"scripts/*.test.mjs\"",
+    "hooks:install": "node scripts/install-hooks.mjs",
+    "hooks:uninstall": "node scripts/uninstall-hooks.mjs"
+  }
+}

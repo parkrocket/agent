@@ -1,0 +1,17 @@
+:root {
+  color-scheme: dark;
+  --bg: #111318;
+  --fg: #d8dee9;
+  --muted: #7b8496;
+  --accent: #88c0d0;
+  --warn: #ebcb8b;
+  --err: #bf616a;
+  --sub: #b48ead;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace;
+}
