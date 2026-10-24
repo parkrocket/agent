@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { OfficeEvent, ServerMessage, SessionMap } from "@ai-office/shared";
+import { MAX_RECENT_EVENTS, type OfficeEvent, type ServerMessage, type SessionMap } from "@ai-office/shared";
 
 export const WS_URL = process.env.NEXT_PUBLIC_AI_OFFICE_WS ?? "ws://localhost:7420/ws";
-const MAX_EVENTS = 500;
 
 export type ConnectionStatus = "connecting" | "open" | "closed";
 
@@ -28,14 +27,26 @@ export function useOfficeSocket() {
         setStatus("open");
       };
       socket.onmessage = (msg) => {
-        const data = JSON.parse(msg.data as string) as ServerMessage;
-        if (data.type === "snapshot") {
-          setEvents(data.events.slice(-MAX_EVENTS));
-          setSessions(data.sessions);
-        } else {
-          setEvents((prev) => [...prev, data.event].slice(-MAX_EVENTS));
-          setSessions((prev) => ({ ...prev, [data.session.sessionId]: data.session }));
+        let data: ServerMessage;
+        try {
+          data = JSON.parse(msg.data as string) as ServerMessage;
+        } catch (err) {
+          console.warn("[ai-office] ignoring malformed WebSocket message", err);
+          return;
         }
+        if (data?.type === "snapshot") {
+          setEvents(data.events.slice(-MAX_RECENT_EVENTS));
+          setSessions(data.sessions);
+        } else if (data?.type === "event") {
+          setEvents((prev) => [...prev, data.event].slice(-MAX_RECENT_EVENTS));
+          setSessions((prev) => ({ ...prev, [data.session.sessionId]: data.session }));
+        } else {
+          console.warn("[ai-office] ignoring unknown WebSocket message", data);
+        }
+      };
+      // The browser always fires close after error, and onclose handles the reconnect.
+      socket.onerror = () => {
+        console.warn(`[ai-office] WebSocket error (${WS_URL}); reconnecting`);
       };
       socket.onclose = () => {
         setStatus("closed");

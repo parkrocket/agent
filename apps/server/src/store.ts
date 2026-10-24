@@ -1,10 +1,10 @@
-import type { OfficeEvent } from "@ai-office/shared";
+import { MAX_RECENT_EVENTS, type OfficeEvent } from "@ai-office/shared";
 
 /** In-memory ring buffer of recent events, replayed to clients on connect. */
 export class EventStore {
   private events: OfficeEvent[] = [];
 
-  constructor(private readonly capacity = 500) {}
+  constructor(private readonly capacity = MAX_RECENT_EVENTS) {}
 
   add(event: OfficeEvent): void {
     this.events.push(event);
