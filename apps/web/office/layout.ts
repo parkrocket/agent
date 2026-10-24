@@ -1,106 +1,104 @@
-// Room layout in base (unscaled) pixels, relative to the room's top-left.
-// A room holds one pod per session (lead desk + staff desks), two pods per
-// row. A "seat" is where a seated character's feet go: just behind the
-// desk's top edge, so the desk hides the legs and the hands rest on it.
+// Room layout in floor tiles (1 unit = 1 tile), relative to the room's
+// north-west corner: x grows east, z grows south (towards the camera).
+// The room has walls on the north and west sides only (a cut-away diorama).
+// Each session gets a pod: the lead's desk at the back facing south, and
+// staff desks in two rows facing north towards the lead, so the camera sees
+// staff monitors and the lead's face.
 import { SUB_DESK_COUNT } from "@ai-office/shared";
-import { DESK_H, DESK_W, LEAD_DESK_H, LEAD_DESK_W, MONITOR_H, MONITOR_W, WALL_H } from "./sprites";
 
 export interface Point {
   x: number;
-  y: number;
+  z: number;
 }
 
 export interface DeskSpot {
   pod: number;
   index: number;
-  /** Desk top-left. */
-  desk: Point;
-  w: number;
-  h: number;
-  seat: Point;
-  /** Monitor top-left, on the desk to the right of the seat. */
-  monitor: Point;
   lead: boolean;
+  /** Desk centre. */
+  desk: Point;
+  /** Where the seated character is placed. */
+  seat: Point;
+  /**
+   * Rotation (radians around y) of the desk unit. In the unit's own frame the
+   * sitter is on the +z side facing -z; staff use 0 (sitter south, facing
+   * north), the lead uses π (sitter north, facing south).
+   */
+  yaw: number;
 }
 
-export const POD_W = 264; // 240 of desks + an aisle between neighbouring pods
-export const POD_H = 150;
+export const POD_W = 4.4;
+export const POD_D = 4.8;
 export const PODS_PER_ROW = 2;
-const ROOM_LEFT = 52; // door aisle
-const ROOM_RIGHT = 56; // bookshelf, cooler, standing spots
-const POD_TOP = 42;
-const POD_CONTENT_H = 140;
-const ROOM_BOTTOM = 26;
+const LEFT = 1.3; // door aisle
+const RIGHT = 1.3; // bookcase, coffee corner, standing spots
+const BACK = 0.7;
+const FRONT = 0.4;
 
-/** Room size for a number of pods; an empty room is drawn at one-pod size. */
-export function roomSize(pods: number): { w: number; h: number } {
+/**
+ * Room footprint for a number of pods; an empty room is drawn at one-pod size.
+ * Rounded up to whole tiles so wall segments (1 tile each) line up with the floor.
+ */
+export function roomSize(pods: number): { w: number; d: number } {
   const n = Math.max(1, pods);
   const cols = Math.min(PODS_PER_ROW, n);
   const rows = Math.ceil(n / PODS_PER_ROW);
-  return {
-    w: ROOM_LEFT + cols * POD_W + ROOM_RIGHT,
-    h: POD_TOP + (rows - 1) * POD_H + POD_CONTENT_H + ROOM_BOTTOM,
-  };
+  return { w: Math.ceil(LEFT + cols * POD_W + RIGHT), d: Math.ceil(BACK + rows * POD_D + FRONT) };
 }
 
 export function podOrigin(pod: number): Point {
-  return { x: ROOM_LEFT + (pod % PODS_PER_ROW) * POD_W, y: POD_TOP + Math.floor(pod / PODS_PER_ROW) * POD_H };
+  return { x: LEFT + (pod % PODS_PER_ROW) * POD_W, z: BACK + Math.floor(pod / PODS_PER_ROW) * POD_D };
 }
 
-/** Just inside the door. */
-export const DOOR: Point = { x: 26, y: WALL_H + 4 };
-/** Outside the door; walking here makes a character disappear through it. */
-export const DOOR_OUT: Point = { x: 26, y: WALL_H - 2 };
+/** Distance from a desk's centre to its chair. */
+const SEAT_OFFSET = 0.62;
+const STAFF_COLS = [0.9, 2.2, 3.5];
+const STAFF_ROWS = [2.1, 3.6];
 
-function spot(pod: number, index: number, rx: number, ry: number, lead = false): DeskSpot {
+function spot(pod: number, index: number, rx: number, rz: number, lead: boolean): DeskSpot {
   const o = podOrigin(pod);
-  const x = o.x + rx;
-  const y = o.y + ry;
-  const w = lead ? LEAD_DESK_W : DESK_W;
-  const h = lead ? LEAD_DESK_H : DESK_H;
-  return {
-    pod,
-    index,
-    desk: { x, y },
-    w,
-    h,
-    seat: { x: x + (lead ? 18 : 14), y: y + 6 },
-    monitor: { x: x + w - MONITOR_W - (lead ? 3 : 1), y: y + 3 - MONITOR_H },
-    lead,
-  };
+  const desk = { x: o.x + rx, z: o.z + rz };
+  // The lead sits north of the desk facing south; staff sit south of theirs facing north.
+  const seat = { x: desk.x, z: desk.z + (lead ? -SEAT_OFFSET : SEAT_OFFSET) };
+  return { pod, index, lead, desk, seat, yaw: lead ? Math.PI : 0 };
 }
-
-const SUB_COLS = [8, 104, 200];
-const SUB_ROWS = [76, 124];
 
 /** Desk 0 is the lead's; 1..SUB_DESK_COUNT are staff desks. */
 export function podDesks(pod: number): DeskSpot[] {
   return [
-    spot(pod, 0, 100, 18, true),
+    spot(pod, 0, 2.2, 0.9, true),
     ...Array.from({ length: SUB_DESK_COUNT }, (_, i) =>
-      spot(pod, i + 1, SUB_COLS[i % SUB_COLS.length]!, SUB_ROWS[Math.floor(i / SUB_COLS.length)]!),
+      spot(pod, i + 1, STAFF_COLS[i % STAFF_COLS.length]!, STAFF_ROWS[Math.floor(i / STAFF_COLS.length)]!, false),
     ),
   ];
 }
 
-/** Standing spots along the right wall for staff without a desk. */
+/** Standing spots along the east side for staff without a desk. */
 export function standingSpot(roomW: number, i: number): Point {
-  return { x: roomW - 16 - (i % 2) * 14, y: 110 + Math.floor(i / 2) * 22 };
+  return { x: roomW - 1.1 + (i % 2) * 0.5, z: 3 + Math.floor(i / 2) * 0.6 };
 }
 
-/** Characters walk in the aisle above each row's chairs, then step down into the seat. */
-const lane = (p: Point) => Math.max(DOOR.y, p.y - 22);
+/** The door is in the west wall near the back; DOOR_OUT is just outside it. */
+export const DOOR: Point = { x: 0.6, z: 1.5 };
+export const DOOR_OUT: Point = { x: -0.6, z: 1.5 };
+export const DOOR_TILE_Z = 1;
 
-/** Walk path from the door: down the left aisle, across above the desk row, into the seat. */
-export function pathFromDoor(to: Point): Point[] {
-  return [DOOR, { x: DOOR.x, y: lane(to) }, { x: to.x, y: lane(to) }, to];
+/** Walkers use the aisle behind (lead) or in front of (staff) each row of chairs. */
+function lane(p: Point, lead: boolean): number {
+  return lead ? p.z - 0.5 : p.z + 0.5;
 }
 
-/** Moving between two spots inside the room (e.g. a reassigned desk). */
-export function pathBetween(from: Point, to: Point): Point[] {
-  return [{ x: from.x, y: lane(to) }, { x: to.x, y: lane(to) }, to];
+export function pathFromDoor(to: Point, lead: boolean): Point[] {
+  const z = lane(to, lead);
+  return [DOOR, { x: 1, z: DOOR.z }, { x: 1, z }, { x: to.x, z }, to];
 }
 
-export function pathToDoor(from: Point): Point[] {
-  return [{ x: from.x, y: lane(from) }, { x: DOOR.x, y: lane(from) }, DOOR, DOOR_OUT];
+export function pathBetween(from: Point, to: Point, lead: boolean): Point[] {
+  const z = lane(to, lead);
+  return [{ x: from.x, z }, { x: to.x, z }, to];
+}
+
+export function pathToDoor(from: Point, lead: boolean): Point[] {
+  const z = lane(from, lead);
+  return [{ x: from.x, z }, { x: 1, z }, { x: 1, z: DOOR.z }, DOOR, DOOR_OUT];
 }

@@ -16,5 +16,9 @@
 .open { background: #2e4a3a; color: #a3be8c; }
 .connecting { background: #4a432e; color: var(--warn); }
 .closed { background: #4a2e32; color: var(--err); }
-.office { position: relative; min-height: 0; margin: 8px 0; border-radius: 6px; overflow: hidden; background: #0e1016; }
+.logCollapsed { grid-template-rows: auto auto minmax(220px, 1fr) auto; }
+.office {
+  position: relative; min-height: 0; margin: 8px 0; border-radius: 8px; overflow: hidden;
+  background: radial-gradient(ellipse at 50% 40%, #2a3146 0%, #171b27 55%, #0e1016 100%);
+}
 .log { min-height: 0; overflow: hidden; }

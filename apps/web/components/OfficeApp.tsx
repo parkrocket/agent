@@ -15,19 +15,31 @@ import styles from "./OfficeApp.module.css";
 const OfficeCanvas = dynamic(() => import("./OfficeCanvas"), { ssr: false });
 
 const VIEW_KEY = "ai-office.view";
+const LOG_KEY = "ai-office.log";
 /** "auto", "lobby", or a room key to focus. */
 type View = string;
 
 export function OfficeApp() {
   const { events, sessions, rooms, config, loaded, status, clearEvents } = useOfficeSocket();
   const [view, setView] = useState<View>("auto");
+  const [logCollapsed, setLogCollapsed] = useState(false);
   const alerts = useAlertSetting();
 
   useEffect(() => {
     try {
       setView(localStorage.getItem(VIEW_KEY) ?? "auto");
+      setLogCollapsed(localStorage.getItem(LOG_KEY) === "collapsed");
     } catch {}
   }, []);
+
+  const toggleLog = () => {
+    setLogCollapsed((c) => {
+      try {
+        localStorage.setItem(LOG_KEY, c ? "open" : "collapsed");
+      } catch {}
+      return !c;
+    });
+  };
 
   const choose = useCallback((next: View) => {
     setView(next);
@@ -68,7 +80,7 @@ export function OfficeApp() {
   );
 
   return (
-    <main className={styles.root}>
+    <main className={`${styles.root} ${logCollapsed ? styles.logCollapsed : ""}`}>
       <header className={styles.header}>
         <h1>AI 오피스</h1>
         <RoomTabs
@@ -102,6 +114,8 @@ export function OfficeApp() {
           inScope={focused ? inRoom : undefined}
           onClear={clearEvents}
           emptyText={`이벤트 대기 중… (${WS_URL})`}
+          collapsed={logCollapsed}
+          onToggleCollapsed={toggleLog}
         />
       </div>
     </main>
