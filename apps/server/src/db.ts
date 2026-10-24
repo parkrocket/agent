@@ -2,7 +2,8 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
-import { OfficeEventSchema, type OfficeEvent } from "@ai-office/shared";
+import { OfficeEventSchema, type OfficeEvent, type UsageRecord } from "@ai-office/shared";
+import type { ReadPosition } from "./usage/reader";
 
 /** Default DB location, outside the repo: $XDG_DATA_HOME/ai-office or ~/.local/share/ai-office. */
 export function defaultDbPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -14,6 +15,7 @@ export function defaultDbPath(env: NodeJS.ProcessEnv = process.env): string {
 export class EventDb {
   private readonly db: DatabaseSync;
   private readonly insertStmt: StatementSync;
+  private readonly usageStmt: StatementSync;
 
   constructor(path: string) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
@@ -27,8 +29,36 @@ export class EventDb {
         json TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS events_ts ON events (ts);
+
+      -- token usage per API message (numbers and ids only; never transcript text)
+      CREATE TABLE IF NOT EXISTS usage_messages (
+        message_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        agent_id TEXT,
+        model TEXT NOT NULL,
+        ts INTEGER NOT NULL,
+        cwd TEXT,
+        input INTEGER NOT NULL,
+        output INTEGER NOT NULL,
+        cache_read INTEGER NOT NULL,
+        cache_write_5m INTEGER NOT NULL,
+        cache_write_1h INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS usage_ts ON usage_messages (ts);
+
+      -- how far each transcript has been read
+      CREATE TABLE IF NOT EXISTS transcript_offsets (
+        path TEXT PRIMARY KEY,
+        offset INTEGER NOT NULL,
+        ino INTEGER NOT NULL
+      );
     `);
     this.insertStmt = this.db.prepare("INSERT OR IGNORE INTO events (id, ts, session_id, json) VALUES (?, ?, ?, ?)");
+    this.usageStmt = this.db.prepare(
+      `INSERT OR IGNORE INTO usage_messages
+       (message_id, session_id, agent_id, model, ts, cwd, input, output, cache_read, cache_write_5m, cache_write_1h)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
   }
 
   insert(e: OfficeEvent): void {
@@ -48,6 +78,12 @@ export class EventDb {
     }
   }
 
+  /** One session's most recent events (newest first), for finding its transcript path. */
+  recentForSession(sessionId: string, limit = 20): OfficeEvent[] {
+    const rows = this.db.prepare("SELECT json FROM events WHERE session_id = ? ORDER BY ts DESC LIMIT ?").all(sessionId, limit);
+    return rows.flatMap((row) => parse(row) ?? []);
+  }
+
   /** The latest `limit` events, oldest first. */
   recent(limit: number): OfficeEvent[] {
     const rows = this.db
@@ -58,6 +94,64 @@ export class EventDb {
 
   count(): number {
     return Number((this.db.prepare("SELECT COUNT(*) AS n FROM events").get() as { n: number }).n);
+  }
+
+  /** Stores one message's usage; false when that message id was already counted. */
+  insertUsage(r: UsageRecord): boolean {
+    const t = r.tokens;
+    const res = this.usageStmt.run(
+      r.messageId,
+      r.sessionId,
+      r.agentId ?? null,
+      r.model,
+      r.ts,
+      r.cwd ?? null,
+      t.input,
+      t.output,
+      t.cacheRead,
+      t.cacheWrite5m,
+      t.cacheWrite1h,
+    );
+    return Number(res.changes) > 0;
+  }
+
+  /** All stored usage, oldest first. */
+  *allUsage(): Generator<UsageRecord> {
+    for (const row of this.db.prepare("SELECT * FROM usage_messages ORDER BY ts").iterate()) {
+      const r = row as Record<string, string | number | null>;
+      yield {
+        messageId: String(r.message_id),
+        sessionId: String(r.session_id),
+        ...(r.agent_id ? { agentId: String(r.agent_id) } : {}),
+        model: String(r.model),
+        ts: Number(r.ts),
+        ...(r.cwd ? { cwd: String(r.cwd) } : {}),
+        tokens: {
+          input: Number(r.input),
+          output: Number(r.output),
+          cacheRead: Number(r.cache_read),
+          cacheWrite5m: Number(r.cache_write_5m),
+          cacheWrite1h: Number(r.cache_write_1h),
+        },
+      };
+    }
+  }
+
+  purgeUsageBefore(ts: number): number {
+    return Number(this.db.prepare("DELETE FROM usage_messages WHERE ts < ?").run(ts).changes);
+  }
+
+  getOffset(path: string): ReadPosition | undefined {
+    const row = this.db.prepare("SELECT offset, ino FROM transcript_offsets WHERE path = ?").get(path) as
+      | { offset: number; ino: number }
+      | undefined;
+    return row ? { offset: Number(row.offset), ino: Number(row.ino) } : undefined;
+  }
+
+  setOffset(path: string, pos: ReadPosition): void {
+    this.db
+      .prepare("INSERT INTO transcript_offsets (path, offset, ino) VALUES (?, ?, ?) ON CONFLICT(path) DO UPDATE SET offset = excluded.offset, ino = excluded.ino")
+      .run(path, pos.offset, pos.ino);
   }
 
   close(): void {

@@ -22,3 +22,8 @@
   background: radial-gradient(ellipse at 50% 40%, #2a3146 0%, #171b27 55%, #0e1016 100%);
 }
 .log { min-height: 0; overflow: hidden; }
+.usageButton {
+  background: #222733; color: var(--fg); border: 1px solid #3b4252; border-radius: 6px;
+  padding: 3px 10px; font: inherit; cursor: pointer; white-space: nowrap;
+}
+.usageButton[aria-pressed="true"] { border-color: var(--accent); }

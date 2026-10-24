@@ -10,6 +10,7 @@ Claude Code 세션을 픽셀아트 사무실로 실시간 시각화하는 "AI �
 - 승인 대기 브라우저 알림
 - 퇴근 처리
 - SQLite 영속화
+- 대화 기록(JSONL) 기반 토큰 사용량 수집, 컨텍스트 게이지, 사용량 패널
 
 환경은 Windows WSL2(Ubuntu)이고, 브라우저는 Windows에서 `localhost`로 접속한다.
 
@@ -28,6 +29,9 @@ pnpm --filter @ai-office/shared exec tsx --test --test-name-pattern="parallel" s
 node scripts/simulate.mjs --projects 3 --sessions 2 [--seed 7] [--speed 2]   # 가짜 세션 동시 재생 (서버 실행 중일 때)
 node scripts/screenshot.mjs out.png [--view lobby|<방 cwd>] [--shots 10 --every 1500] [--size 1600x1000] [--scale 2] [--ls key=value]
 AI_OFFICE_DB=/tmp/x.db AI_OFFICE_OFF_DUTY_MIN=0.5 pnpm dev   # 데모·테스트용: 임시 DB, 퇴근 30초
+CLAUDE_CONFIG_DIR=/tmp/ch AI_OFFICE_DB=/tmp/x.db pnpm dev     # 사용량 데모: 가짜 대화 기록 폴더
+node scripts/simulate.mjs --transcripts /tmp/ch/projects       # 가짜 대화 기록(토큰 수만)도 함께 기록
+pnpm usage:import                                              # 과거 대화 기록을 사용량 통계로 가져오기
 pnpm --filter @ai-office/server dev   # 패키지 하나만
 pnpm hooks:install --dry-run          # ~/.claude/settings.json 병합 결과만 출력
 pnpm hooks:install / pnpm hooks:uninstall
@@ -75,6 +79,15 @@ async hook 때문에 생기는 경우도 처리한다:
 - **바뀐 게 없을 때:** `sweepOffDuty`는 같은 객체를 돌려준다. 서버는 이것으로 브로드캐스트 여부를 판단한다.
 - **세션 상한:** 50개(`MAX_SESSIONS`)이고, 넘으면 퇴근한 세션부터 지운다. 세션이 하나도 없는 방은 사라진다.
 
+**사용량** (`packages/shared/src/transcript.ts`, `apps/server/src/usage/`): Claude Code 대화 기록(`~/.claude/projects/<cwd를 -로 바꾼 이름>/<세션ID>.jsonl`, 서브에이전트는 `<세션ID>/subagents/agent-<id>.jsonl`)에서 토큰 수만 읽는다.
+- **원문 금지:** `parseUsageLine`은 `type="assistant"` 줄의 `message.id/model/usage`, `timestamp`, `sessionId`, `agentId`, `cwd`만 새 객체로 복사한다. 본문·생각·도구 입출력·첨부 등은 메모리에도 DB에도 남기지 않는다. 형식은 공식 스펙이 아니므로, 모르는 줄은 조용히 무시한다.
+- **중복 제거:** 같은 `message.id`가 여러 줄(최대 5줄, usage 동일)로 기록되므로, 메시지 ID로 한 번만 센다(`usage_messages` PK).
+- **연결:** hook이 `transcript_path`(SubagentStop은 `agent_transcript_path`)를 경로로만 보낸다(`OfficeEvent.transcript`). 서버는 `~/.claude/projects`(`CLAUDE_CONFIG_DIR`) 안의 `.jsonl`만 읽는다(`allowedTranscript`, 심볼릭 링크 해석 후 검사). `/events`는 아무 로컬 프로세스나 보낼 수 있으므로, 이 검사가 없으면 임의 파일을 읽는 통로가 된다.
+- **서브에이전트 ID:** 실제 확인 결과(Claude Code 2.1.310), hook의 `agent_id`, JSONL의 `agentId`, 파일 이름의 `agent-` 뒤가 모두 같은 17자 16진수다(접두사 없음). 문서 예시와 달라서 `normalizeAgentId`로 `agent-` 접두사를 떼고 비교한다.
+- **증분 읽기:** `readIncrement`는 파일별 `{offset, inode}`(`transcript_offsets`) 이후의 완전한 줄만 읽는다. 잘린 마지막 줄은 다음 차례로 미룬다. 파일이 바뀌었거나 줄었으면 처음부터 다시 읽는다. 감시는 `fs.watch(recursive)`와 5초 폴링을 함께 쓴다.
+- **집계:** `UsageTracker`가 세션·에이전트별 누적, 현재 컨텍스트(마지막 요청의 input + cache_read + cache_write), 시간 단위 버킷(48시간)을 메모리 스냅샷으로 두고 `{type:"usage"}`로 1초에 최대 한 번 보낸다. 사용량 보관은 90일(`AI_OFFICE_USAGE_RETENTION_DAYS`)이다.
+- **모델 설정:** `config/models.default.json`(컨텍스트 한도, API 정가, 확인 출처·날짜)에 사용자 파일(`~/.config/ai-office/models.json` 또는 `AI_OFFICE_MODELS_FILE`)을 모델별로 합친다. 공식 문서로 확인하지 못한 한도는 `contextVerified: false`이고 화면에 "미확인"/"?"로 표시한다. Haiku 5.5처럼 프롬프트 길이에 따라 값이 다른 단가는 `priceOverThreshold`로 요청마다 판단한다.
+
 **서버** (`apps/server`): `app.ts`의 `buildServer(opts)`가 앱을 만들고, `index.ts`는 환경 변수를 읽어 listen만 한다. 테스트는 `buildServer`에 임시 DB를 넘기고 `inject`/`injectWS`로 검증한다.
 - **영속화:** 이벤트는 SQLite(`db.ts`, 내장 `node:sqlite`라 네이티브 빌드 없음)에 저장한다. 위치는 `AI_OFFICE_DB`이고, 기본값은 `$XDG_DATA_HOME` 또는 `~/.local/share/ai-office/events.db`다.
 - **기동 순서:** 보관 기간(`AI_OFFICE_RETENTION_DAYS`, 기본 7일)이 지난 이벤트 삭제 → 남은 이벤트를 `ts` 순으로 재생 → sweep → `compactPods`. 보관 기간 정리는 1시간마다 한 번 더 돈다.
@@ -108,6 +121,7 @@ async hook 때문에 생기는 경우도 처리한다:
 - **표시 단계(`Detail`):** 집중 보기는 모두 표시한다. 로비는 팀장 말풍선·이름과 손 든 에이전트만, 아주 작으면 "!"만 표시한다.
 - **좌표:** 바닥 타일 1칸 = 1단위다. x는 동쪽, z는 남쪽(카메라 쪽)이다. 방 안 좌표는 방 북서쪽 모서리 기준이다. 팀 구역 하나는 4.4×4.8칸이고, 방 크기는 정수로 올린다(`layout.ts`).
 - **책상 묶음:** 묶음 안에서는 앉는 사람이 +z 쪽에서 -z를 본다. 직원은 회전 0(남쪽에 앉아 북쪽의 팀장을 봄, 카메라에 모니터 화면이 보임), 팀장은 π(카메라를 봄)다. 팀장 모니터는 얼굴이 가리지 않게 옆으로 비킨다.
+- **게이지:** 이름표 옆에 컨텍스트 사용량을 `12% · 120K` 형태로 표시한다. 80% 이상은 주황, 95% 이상은 빨강이다. 계산은 three를 쓰지 않는 `lib/usage.ts`에 있다.
 - **에셋:** `public/assets/kenney/`의 Kenney Furniture Kit, Mini Characters다(CC0, 각 폴더에 `License.txt`). `assets.ts`가 한 번만 로드한다. 가구는 바닥 중심·밑면 y=0으로 다시 맞춘 뒤 복제한다. 모델 기본 방향 보정은 `RoomView.ts`의 `FACING` 표에 있다. 방마다 재질 사본을 가져서, 빈 방은 그 방 재질만 어둡게 한다(불 끄기).
 - **캐릭터 애니메이션:** 뼈대는 root, leg-left/right, torso, arm-left/right, head다. `partClip`으로 하체(`sit`/`walk`/`static`)와 상체(`interact-right`=타이핑, `idle`, `emote-yes`)를 나눠 겹친다. 그 위에 `Agent.pose()`가 뼈 회전을 덧붙인다(손 들기 = arm-right에 X −2.9, Z +0.35. Z가 음수면 팔이 큰 머리 속으로 접혀 안 보인다).
 - **모니터 화면:** `screens.ts`가 상태별 캔버스 텍스처를 하나씩만 만들어 모든 모니터가 공유한다.

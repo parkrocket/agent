@@ -8,9 +8,14 @@ import {
   type RoomMap,
   type ServerMessage,
   type SessionMap,
+  type UsageSnapshot,
 } from "@ai-office/shared";
 
 export const WS_URL = process.env.NEXT_PUBLIC_AI_OFFICE_WS ?? "ws://localhost:7420/ws";
+/** HTTP base of the same server (for one-off requests such as the usage import). */
+export const SERVER_URL = WS_URL.replace(/^ws/, "http").replace(/\/ws$/, "");
+
+const EMPTY_USAGE: UsageSnapshot = { sessions: {}, hours: {} };
 
 export type ConnectionStatus = "connecting" | "open" | "closed";
 
@@ -20,6 +25,7 @@ export function useOfficeSocket() {
   const [sessions, setSessions] = useState<SessionMap>({});
   const [rooms, setRooms] = useState<RoomMap>({});
   const [config, setConfig] = useState<OfficeConfig | undefined>();
+  const [usage, setUsage] = useState<UsageSnapshot>(EMPTY_USAGE);
   /** True once the first snapshot arrived (alerts use it to skip already-waiting agents). */
   const [loaded, setLoaded] = useState(false);
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
@@ -51,6 +57,7 @@ export function useOfficeSocket() {
             setSessions(data.sessions);
             setRooms(data.rooms);
             setConfig(data.config);
+            setUsage(data.usage ?? EMPTY_USAGE);
             setLoaded(true);
             break;
           case "event":
@@ -61,6 +68,9 @@ export function useOfficeSocket() {
           case "state":
             setSessions(data.sessions);
             setRooms(data.rooms);
+            break;
+          case "usage":
+            setUsage(data.usage);
             break;
           default:
             console.warn("[ai-office] ignoring unknown WebSocket message", data);
@@ -85,5 +95,5 @@ export function useOfficeSocket() {
     };
   }, []);
 
-  return { events, sessions, rooms, config, loaded, status, clearEvents: () => setEvents([]) };
+  return { events, sessions, rooms, config, usage, loaded, status, clearEvents: () => setEvents([]) };
 }

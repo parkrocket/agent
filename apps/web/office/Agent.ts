@@ -4,6 +4,7 @@ import type { AgentState, AgentStatus } from "@ai-office/shared";
 import { cloneCharacter, partClip, type Assets, type CharacterName } from "./assets";
 import { pathBetween, pathFromDoor, pathToDoor, type Point } from "./layout";
 import { STRETCH_MS, bubbleText, visualStatus } from "./status";
+import { gaugeLabel, gaugeLevel, type ContextGauge } from "@/lib/usage";
 
 const WALK_SPEED = 1.6; // tiles per second
 const CHAR_SCALE = 0.82;
@@ -46,13 +47,24 @@ export class Agent {
   deskKey: string | undefined;
   /** Route from the elevator to just outside the room door (room-local); kept current by the room. */
   entry: Point[];
+  /** Context window use, from the transcripts; undefined until usage is known. */
+  gauge: ContextGauge | undefined;
   private readonly lead: boolean;
   private readonly model: THREE.Object3D;
   private readonly mixer: THREE.AnimationMixer;
   private readonly bones: Record<"head" | "armLeft" | "armRight" | "torso", THREE.Object3D | undefined>;
   private readonly ring: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
   private readonly label: CSS2DObject;
-  private readonly el: { bubble: HTMLDivElement; badge: HTMLDivElement; zzz: HTMLDivElement; name: HTMLDivElement };
+  private readonly el: {
+    bubble: HTMLDivElement;
+    badge: HTMLDivElement;
+    zzz: HTMLDivElement;
+    tag: HTMLDivElement;
+    gauge: HTMLDivElement;
+    gaugeFill: HTMLSpanElement;
+    gaugeText: HTMLSpanElement;
+  };
+  private shownGauge = "";
   private readonly playing: { lower?: THREE.AnimationAction; upper?: THREE.AnimationAction } = {};
   private path: Point[] = [];
   private mode: Mode;
@@ -96,12 +108,25 @@ export class Agent {
     const zzz = document.createElement("div");
     zzz.className = "o3-zzz";
     zzz.textContent = "z";
-    const name = document.createElement("div");
+    const tag = document.createElement("div");
+    tag.className = "o3-tag";
+    const name = document.createElement("span");
     name.className = `o3-name${this.lead ? " o3-lead" : ""}`;
     name.textContent = displayName;
-    // stacked above the head: "!" badge, speech bubble, then the name right over the head
-    box.append(badge, bubble, zzz, name);
-    this.el = { bubble, badge, zzz, name };
+    const gauge = document.createElement("div");
+    gauge.className = "o3-gauge";
+    gauge.style.display = "none";
+    const bar = document.createElement("span");
+    bar.className = "o3-gauge-bar";
+    const gaugeFill = document.createElement("span");
+    bar.append(gaugeFill);
+    const gaugeText = document.createElement("span");
+    gaugeText.className = "o3-gauge-text";
+    gauge.append(bar, gaugeText);
+    tag.append(name, gauge);
+    // stacked above the head: "!" badge, speech bubble, then name + context gauge right over the head
+    box.append(badge, bubble, zzz, tag);
+    this.el = { bubble, badge, zzz, tag, gauge, gaugeFill, gaugeText };
     this.label = new CSS2DObject(box);
     this.label.center.set(0.5, 1);
     this.label.position.y = 0.78;
@@ -195,7 +220,22 @@ export class Agent {
     this.el.badge.style.display = showUi && status === "waiting" && !walking ? "" : "none";
     this.el.zzz.style.display = showUi && status === "idle" && !walking && seated ? "" : "none";
     this.label.visible = showUi;
-    this.el.name.style.display = detail === "full" || (detail === "summary" && this.lead) ? "" : "none";
+    const tagged = detail === "full" || (detail === "summary" && this.lead);
+    this.el.tag.style.display = tagged ? "" : "none";
+    this.renderGauge();
+  }
+
+  private renderGauge() {
+    const g = this.gauge;
+    const key = g ? `${gaugeLabel(g)}|${gaugeLevel(g)}|${Math.min(100, g.pct).toFixed(1)}` : "";
+    if (key === this.shownGauge) return;
+    this.shownGauge = key;
+    this.el.gauge.style.display = g ? "" : "none";
+    if (!g) return;
+    this.el.gauge.className = `o3-gauge o3-gauge-${gaugeLevel(g)}`;
+    this.el.gaugeFill.style.width = `${Math.min(100, g.pct)}%`;
+    this.el.gaugeText.textContent = gaugeLabel(g);
+    this.el.gauge.title = `컨텍스트 ${g.tokens.toLocaleString()} / ${g.limit.toLocaleString()} 토큰 (${g.model})${g.verified ? "" : " · 한도 미확인: 설정 파일에서 바꿀 수 있음"}`;
   }
 
   /** Bone tweaks layered on top of the clips. */

@@ -2,13 +2,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sanitize } from "./sanitize.mjs";
 
-const base = { session_id: "s1", cwd: "/home/u/projects/agent", transcript_path: "/secret/t.jsonl", permission_mode: "default" };
+const TRANSCRIPT = "/home/u/.claude/projects/-home-u-projects-agent/s1.jsonl";
+const base = { session_id: "s1", cwd: "/home/u/projects/agent", transcript_path: TRANSCRIPT, permission_mode: "default" };
 const SECRET = "TOP-SECRET-CONTENT";
 
 function assertNoSecret(out) {
   const json = JSON.stringify(out);
   assert.ok(!json.includes(SECRET), `leaked: ${json}`);
-  assert.ok(!json.includes("transcript"), `leaked transcript: ${json}`);
+  // the transcript is forwarded as a path only (the server reads usage numbers from it)
+  if (out?.transcript !== undefined) assert.ok(out.transcript.endsWith(".jsonl"), `odd transcript: ${json}`);
 }
 
 test("UserPromptSubmit drops prompt", () => {
@@ -80,7 +82,7 @@ test("subagent events identify the agent and drop last message", () => {
     hook_event_name: "SubagentStop",
     agent_id: "a1",
     agent_type: "Explore",
-    agent_transcript_path: "/secret/transcript.jsonl",
+    agent_transcript_path: "/home/u/.claude/projects/p/s1/subagents/agent-a1.jsonl",
     last_assistant_message: SECRET,
     stop_hook_active: false,
   });
@@ -97,4 +99,12 @@ test("unknown or incomplete input returns null", () => {
   assert.equal(sanitize({}), null);
   assert.equal(sanitize({ ...base, hook_event_name: "PreCompact" }), null);
   assert.equal(sanitize({ hook_event_name: "Stop", cwd: "/x" }), null);
+});
+
+test("transcript paths are forwarded as paths: the session's, or the sub-agent's on SubagentStop", () => {
+  assert.equal(sanitize({ ...base, hook_event_name: "UserPromptSubmit", prompt: SECRET }).transcript, TRANSCRIPT);
+  const stop = sanitize({ ...base, hook_event_name: "SubagentStop", agent_id: "a1", agent_transcript_path: "/x/s1/subagents/agent-a1.jsonl" });
+  assert.equal(stop.transcript, "/x/s1/subagents/agent-a1.jsonl");
+  assert.equal(sanitize({ ...base, transcript_path: "/etc/passwd", hook_event_name: "Stop" }).transcript, undefined, "only .jsonl paths");
+  assert.equal(sanitize({ ...base, transcript_path: 42, hook_event_name: "Stop" }).transcript, undefined);
 });

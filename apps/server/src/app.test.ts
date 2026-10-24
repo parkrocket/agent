@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { OfficeEvent, ServerMessage } from "@ai-office/shared";
 import { buildServer, type ServerOptions } from "./app";
 import { EventDb } from "./db";
+import { loadModelConfig } from "./usage/models";
 
 const MIN = 60_000;
 const DAY = 24 * 60 * MIN;
@@ -18,6 +19,9 @@ function tempDb(t: { after: (fn: () => void) => void }) {
 
 async function server(dbPath: string, extra: Partial<ServerOptions> = {}) {
   const app = await buildServer({
+    // never read the real ~/.claude/projects or the user's model overrides from tests
+    projectsRoot: join(dbPath, "..", "no-projects"),
+    models: loadModelConfig(join(dbPath, "..", "no-user-models.json")),
     dbPath,
     offDutyMs: 10 * MIN,
     retentionMs: 7 * DAY,
@@ -117,7 +121,8 @@ test("events go to SQLite and a restarted server restores the office", async (t)
   assert.equal(s1.agents.main!.status, "thinking");
   assert.equal(s1.agents.a1!.status, "reading");
   assert.equal(s1.agents.a1!.file, "cart.ts");
-  assert.deepEqual(snap.config, { offDutyMs: 10 * MIN });
+  assert.equal(snap.config.offDutyMs, 10 * MIN);
+  assert.ok(snap.config.models.models["claude-opus-5-5"], "model limits/prices are sent to clients");
 });
 
 test("on restart, events past retention are deleted and stale sessions are off duty", async (t) => {

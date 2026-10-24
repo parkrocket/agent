@@ -10,6 +10,7 @@ import { useAlertSetting, useWaitingAlerts } from "@/lib/useWaitingAlerts";
 import { AlertToggle } from "./AlertToggle";
 import { EventLog } from "./EventLog";
 import { RoomTabs } from "./RoomTabs";
+import { UsagePanel } from "./UsagePanel";
 import styles from "./OfficeApp.module.css";
 
 const OfficeCanvas = dynamic(() => import("./OfficeCanvas"), { ssr: false });
@@ -20,7 +21,8 @@ const LOG_KEY = "ai-office.log";
 type View = string;
 
 export function OfficeApp() {
-  const { events, sessions, rooms, config, loaded, status, clearEvents } = useOfficeSocket();
+  const { events, sessions, rooms, config, usage, loaded, status, clearEvents } = useOfficeSocket();
+  const [usageOpen, setUsageOpen] = useState(false);
   const [view, setView] = useState<View>("auto");
   const [logCollapsed, setLogCollapsed] = useState(false);
   const alerts = useAlertSetting();
@@ -63,12 +65,19 @@ export function OfficeApp() {
 
   const input: SceneInput = useMemo(
     () => ({
-      rooms: summaries.map((r) => ({ room: r.room, sessions, label: r.label, activity: r.activity })),
+      rooms: summaries.map((r) => ({
+        room: r.room,
+        sessions,
+        label: r.label,
+        activity: r.activity,
+        usage,
+        models: config?.models,
+      })),
       // The lobby shows rooms with someone in them; if everyone went home, show the empty rooms instead.
       visible: focusKey ? [focusKey] : (occupied.length ? occupied : summaries).map((r) => r.room.key),
       mode,
     }),
-    [summaries, sessions, focusKey, occupied, mode],
+    [summaries, sessions, focusKey, occupied, mode, usage, config],
   );
 
   useWaitingAlerts({ sessions, rooms: summaries, loaded, enabled: alerts.state === "on", onOpenRoom: choose });
@@ -96,6 +105,9 @@ export function OfficeApp() {
               퇴근 {Math.round((config.offDutyMs / 60_000) * 10) / 10}분
             </span>
           )}
+          <button className={styles.usageButton} onClick={() => setUsageOpen((v) => !v)} aria-pressed={usageOpen}>
+            📊 사용량
+          </button>
           <AlertToggle state={alerts.state} onToggle={alerts.toggle} />
           <span className={`${styles.badge} ${styles[status]}`}>{status}</span>
         </div>
@@ -106,6 +118,9 @@ export function OfficeApp() {
       </div>
       <div className={styles.office}>
         <OfficeCanvas input={input} onOpenRoom={choose} />
+        {usageOpen && (
+          <UsagePanel usage={usage} sessions={sessions} rooms={rooms} models={config?.models} onClose={() => setUsageOpen(false)} />
+        )}
       </div>
       <div className={styles.log}>
         <EventLog

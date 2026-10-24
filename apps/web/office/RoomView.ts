@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
-import type { RoomActivity, RoomState, SessionMap } from "@ai-office/shared";
+import type { ModelConfig, RoomActivity, RoomState, SessionMap, UsageSnapshot } from "@ai-office/shared";
+import { contextGauge } from "@/lib/usage";
 import { Agent, type Detail } from "./Agent";
 import { CHARACTERS, cloneFurniture, type Assets, type CharacterName, type FurnitureName } from "./assets";
 import {
@@ -21,6 +22,9 @@ export interface RoomInput {
   sessions: SessionMap;
   label: string;
   activity: RoomActivity;
+  /** Token usage for the context gauges (optional: drawn without gauges when absent). */
+  usage?: UsageSnapshot;
+  models?: ModelConfig;
 }
 
 /**
@@ -149,7 +153,7 @@ export class RoomView {
   }
 
   /** Reconciles characters with the room's present sessions. `firstPaint` seats everyone without walking in. */
-  sync({ room, sessions, label, activity }: RoomInput, firstPaint: boolean) {
+  sync({ room, sessions, label, activity, usage, models }: RoomInput, firstPaint: boolean) {
     this.activity = activity;
     this.order = room.firstSeenAt;
     const titleEl = this.title.element;
@@ -171,8 +175,10 @@ export class RoomView {
         wanted.add(key);
         const spot = agent.desk >= 0 ? desks[agent.desk] : undefined;
         const home = spot ? spot.seat : standingSpot(this.size.w, standing++);
+        const gauge = usage ? contextGauge(usage, models, session.sessionId, agent) : undefined;
         const existing = this.agents.get(key);
         if (existing) {
+          existing.gauge = gauge;
           existing.agent = agent;
           existing.deskKey = spot ? deskKey(pod, agent.desk) : undefined;
           existing.moveHome(home, spot?.yaw);
@@ -183,6 +189,7 @@ export class RoomView {
         const look = lead ? LEAD_LOOK : staffLook(agent.key);
         const a = new Agent(this.assets, agent, look, home, spot?.yaw, !firstPaint, name, this.entry);
         a.deskKey = spot ? deskKey(pod, agent.desk) : undefined;
+        a.gauge = gauge;
         this.group.add(a.root);
         this.agents.set(key, a);
       }
