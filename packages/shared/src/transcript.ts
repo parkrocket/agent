@@ -31,6 +31,9 @@ export function normalizeAgentId(v: string): string {
 }
 
 /** Parses one JSONL line into usage metadata, or null for anything else (or anything malformed). */
+/** POSIX (`/home/u/x`), Windows drive (`C:\Users\x`, `C:/x`) or UNC (`\\server\x`) absolute paths. */
+const ABSOLUTE_PATH = /^(\/|[A-Za-z]:[\\/]|\\\\)/;
+
 export function parseUsageLine(line: string): UsageRecord | null {
   if (!line.includes('"usage"')) return null; // cheap skip for the many non-usage lines
   let o: unknown;
@@ -61,7 +64,7 @@ export function parseUsageLine(line: string): UsageRecord | null {
   const split = w5 !== undefined && w1 !== undefined && w5 + w1 === totalWrite;
 
   const agentId = id(row.agentId);
-  const cwd = typeof row.cwd === "string" && row.cwd.startsWith("/") && row.cwd.length <= 4096 ? row.cwd : undefined;
+  const cwd = typeof row.cwd === "string" && ABSOLUTE_PATH.test(row.cwd) && row.cwd.length <= 4096 ? row.cwd : undefined;
   return {
     messageId,
     sessionId,

@@ -4,6 +4,7 @@ import type { OfficeEvent } from "./events";
 import {
   EMPTY_OFFICE,
   compactPods,
+  dirName,
   MAX_SESSIONS,
   SUB_DESK_COUNT,
   reduceOffice,
@@ -359,4 +360,13 @@ test("reduceOffice caps sessions, dropping off-duty ones first, and is pure", ()
   assert.ok(state.sessions.keep, "an older but present session stays");
   assert.ok(!state.rooms["/p/old"], "a room with no sessions left is removed");
   assert.deepEqual(st, before, "previous state is not mutated");
+});
+
+test("dirName: last path segment for POSIX and Windows paths", () => {
+  assert.equal(dirName("/home/u/shop"), "shop");
+  assert.equal(dirName("/home/u/shop/"), "shop");
+  assert.equal(dirName("C:\\work\\shop"), "shop");
+  assert.equal(dirName("C:\\work\\shop\\"), "shop");
+  assert.equal(dirName("C:/work/shop"), "shop");
+  assert.equal(dirName("/"), "/");
 });

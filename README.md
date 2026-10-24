@@ -17,8 +17,11 @@ Claude Code ─(hook)→ 로컬 서버 :7420 ─(WebSocket)→ 브라우저 :742
 
 - **Node.js 22.13 이상**(`node -v`로 확인). nvm을 쓴다면 `nvm install 22`.
 - **pnpm:** Node에 들어 있는 corepack으로 켭니다: `corepack enable`
-- **Claude Code**
-- **운영체제:** Windows의 WSL2(Ubuntu)에서 주로 쓰고 확인했습니다. Linux와 macOS도 같은 방법으로 동작합니다. Windows용 Node에서 직접 실행하는 것은 확인하지 않았습니다.
+  - Windows에서 관리자 권한이 없다면: `corepack enable pnpm --install-directory %APPDATA%\npm`
+- **Claude Code** (CLI 또는 VS Code 확장. 둘 다 같은 `~/.claude/settings.json`을 쓰므로 똑같이 동작합니다)
+- **운영체제:** Windows(Node 직접 실행), WSL2(Ubuntu), Linux에서 확인했습니다. macOS도 같은 방법으로 동작할 것입니다.
+  - **Windows:** Claude Code가 hook을 Git Bash로 실행하므로 [Git for Windows](https://git-scm.com/download/win)가 필요합니다.
+  - **AI 오피스는 Claude Code와 같은 쪽에 설치하세요.** Windows의 Claude Code는 Windows의 `%USERPROFILE%\.claude`를, WSL의 Claude Code는 WSL의 `~/.claude`를 씁니다. VS Code로 WSL 폴더를 연다면 "WSL에서 다시 열기"로 연결해야 WSL 쪽 설정을 씁니다.
 
 ## 설치
 
@@ -30,7 +33,7 @@ pnpm hooks:install     # Claude Code에 hook 등록 (아래 "hook" 참고)
 pnpm start             # 서버와 웹을 백그라운드로 실행 (처음에는 빌드 때문에 1~2분)
 ```
 
-브라우저에서 **http://localhost:7421** 을 엽니다. WSL2라면 Windows 브라우저에서 그대로 열면 됩니다.
+브라우저에서 **http://localhost:7421** 을 엽니다. WSL2라면 Windows 브라우저에서 그대로 열면 됩니다. Windows에서는 서버와 웹이 콘솔 창 없이 백그라운드로 돌고, `pnpm stop`이 `taskkill`로 끕니다.
 
 그다음 **Claude Code를 새로 시작**하세요. hook은 새로 시작한 세션부터 적용됩니다. 대화를 시작하면 사무실에 방이 생기고 팀장이 출근합니다.
 

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, cpSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -18,6 +18,7 @@ import {
   STATUSLINE_MARKER,
   STATUSLINE_REFRESH_SEC,
   addOurStatusLine,
+  backupPath,
   removeOurStatusLine,
   statuslineState,
 } from "./settings-lib.mjs";
@@ -85,7 +86,7 @@ test("installHookFiles copies the hook with a version record; removeHookFiles de
   assert.equal(existsSync(dest), false, "an emptied folder goes too");
 });
 
-const readdir = (d) => execFileSync("ls", ["-A", d], { encoding: "utf8" }).split("\n").filter(Boolean);
+const readdir = (d) => readdirSync(d).sort();
 
 test("hooks:install registers the copy, which keeps working when the working tree changes; uninstall removes both", (t) => {
   const root = tempDir(t);
@@ -170,4 +171,17 @@ test("statusline:install copies and registers; refuses a foreign one; uninstall 
   assert.equal(cli("uninstall-statusline.mjs").status, 0);
   assert.deepEqual(JSON.parse(readFileSync(settingsPath, "utf8")), { theme: "dark" });
   assert.equal(existsSync(dir), false);
+});
+
+test("backups never overwrite each other (two installs in the same second)", (t) => {
+  const root = tempDir(t);
+  const settings = join(root, "settings.json");
+  writeFileSync(settings, "{}");
+  const first = backupPath(settings, "20261024-215743");
+  assert.equal(first, `${settings}.bak-20261024-215743`);
+  writeFileSync(first, "{}");
+  const second = backupPath(settings, "20261024-215743");
+  assert.equal(second, `${settings}.bak-20261024-215743-2`);
+  writeFileSync(second, "{}");
+  assert.equal(backupPath(settings, "20261024-215743"), `${settings}.bak-20261024-215743-3`);
 });

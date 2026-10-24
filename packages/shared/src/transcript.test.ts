@@ -139,3 +139,12 @@ test("formatTokens", () => {
     "0", "999", "1.2K", "12K", "120K", "1M", "1.23M", "12.5M",
   ]);
 });
+
+test("cwd: POSIX and Windows absolute paths are kept, anything else dropped", () => {
+  const cwdOf = (cwd: unknown) => parseUsageLine(assistantLine({ cwd }))?.cwd;
+  assert.equal(cwdOf("/home/u/proj"), "/home/u/proj");
+  assert.equal(cwdOf("C:\\Users\\u\\proj"), "C:\\Users\\u\\proj");
+  assert.equal(cwdOf("d:/work/proj"), "d:/work/proj");
+  assert.equal(cwdOf("\\\\server\\share\\proj"), "\\\\server\\share\\proj");
+  for (const bad of ["proj", "C:proj", SECRET, 3]) assert.equal(cwdOf(bad), undefined, String(bad));
+});

@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,9 +11,16 @@ import { loadModelConfig } from "./usage/models";
 const MIN = 60_000;
 const DAY = 24 * 60 * MIN;
 
-function tempDb(t: { after: (fn: () => void) => void }) {
+// Removed once the whole file is done, not per test: a test's server (or DB) is closed in its
+// own after-hook, and Windows can't delete a folder while the SQLite file in it is still open.
+const tempDirs: string[] = [];
+after(() => {
+  for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+});
+
+function tempDb() {
   const dir = mkdtempSync(join(tmpdir(), "ai-office-test-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  tempDirs.push(dir);
   return join(dir, "nested", "events.db");
 }
 
@@ -68,14 +75,14 @@ async function snapshot(app: Awaited<ReturnType<typeof server>>) {
 }
 
 test("POST /events accepts a valid event with 204", async (t) => {
-  const app = await server(tempDb(t));
+  const app = await server(tempDb());
   t.after(() => app.close());
   const res = await app.inject({ method: "POST", url: "/events", payload: event({ event: "UserPromptSubmit" }) });
   assert.equal(res.statusCode, 204);
 });
 
 test("POST /events rejects unknown fields (e.g. a leaked prompt) and bad shapes with 400", async (t) => {
-  const app = await server(tempDb(t));
+  const app = await server(tempDb());
   t.after(() => app.close());
   for (const payload of [
     { ...event({ event: "UserPromptSubmit" }), prompt: "secret" },
@@ -90,7 +97,7 @@ test("POST /events rejects unknown fields (e.g. a leaked prompt) and bad shapes 
 });
 
 test("/ws rejects other origins and accepts the web app's", async (t) => {
-  const app = await server(tempDb(t));
+  const app = await server(tempDb());
   t.after(() => app.close());
   const upgrade = { connection: "upgrade", upgrade: "websocket", "sec-websocket-version": "13", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==" };
   const evil = await app.inject({ method: "GET", url: "/ws", headers: { ...upgrade, origin: "http://evil.example" } });
@@ -100,7 +107,7 @@ test("/ws rejects other origins and accepts the web app's", async (t) => {
 });
 
 test("events go to SQLite and a restarted server restores the office", async (t) => {
-  const dbPath = tempDb(t);
+  const dbPath = tempDb();
   const first = await server(dbPath);
   for (const e of [
     event({ event: "UserPromptSubmit" }),
@@ -126,7 +133,7 @@ test("events go to SQLite and a restarted server restores the office", async (t)
 });
 
 test("on restart, events past retention are deleted and stale sessions are off duty", async (t) => {
-  const dbPath = tempDb(t);
+  const dbPath = tempDb();
   const now = Date.now();
   const db = new EventDb(dbPath);
   db.insert(event({ event: "UserPromptSubmit", sessionId: "ancient", ts: now - 8 * DAY }));
@@ -149,7 +156,7 @@ test("on restart, events past retention are deleted and stale sessions are off d
 
 test("the off-duty sweep broadcasts a state message", async (t) => {
   let clock = Date.now();
-  const app = await server(tempDb(t), { now: () => clock, sweepIntervalMs: 20 });
+  const app = await server(tempDb(), { now: () => clock, sweepIntervalMs: 20 });
   t.after(() => app.close());
   await app.inject({ method: "POST", url: "/events", payload: event({ event: "Stop", ts: clock }) });
 
@@ -174,7 +181,7 @@ const usageRec = (messageId: string, sessionId: string, ts: number, input: numbe
 });
 
 test("GET /history lists past sessions with events and tokens; transcript-only ones are not replayable", async (t) => {
-  const dbPath = tempDb(t);
+  const dbPath = tempDb();
   const now = Date.now();
   const db = new EventDb(dbPath);
   db.insert(event({ event: "UserPromptSubmit", sessionId: "old", ts: now - 60 * MIN }));
@@ -208,7 +215,7 @@ test("GET /history lists past sessions with events and tokens; transcript-only o
 });
 
 test("GET /history/:id/events returns one session's events and usage in time order, 404 when none", async (t) => {
-  const dbPath = tempDb(t);
+  const dbPath = tempDb();
   const now = Date.now();
   const db = new EventDb(dbPath);
   // stored out of order, as async hooks can deliver them
@@ -237,7 +244,7 @@ test("GET /history/:id/events returns one session's events and usage in time ord
 });
 
 test("events with an unsupported version are refused with a clear reason and counted in /health", async (t) => {
-  const app = await server(tempDb(t));
+  const app = await server(tempDb());
   t.after(() => app.close());
   for (const v of [2, "1", undefined]) {
     const res = await app.inject({ method: "POST", url: "/events", payload: { ...event({ event: "Stop" }), v } });
@@ -267,7 +274,7 @@ function limitsReport(ts: number, five = 23.5) {
 }
 
 test("POST /limits: reports are merged and broadcast, kept across restarts, and stale ones ignored", async (t) => {
-  const dbPath = tempDb(t);
+  const dbPath = tempDb();
   const first = await server(dbPath);
   assert.equal((await snapshot(first)).limits, null, "nothing before the first report");
 
@@ -296,7 +303,7 @@ test("POST /limits: reports are merged and broadcast, kept across restarts, and 
 });
 
 test("POST /limits rejects extra fields and implausible values with 400", async (t) => {
-  const app = await server(tempDb(t));
+  const app = await server(tempDb());
   t.after(() => app.close());
   const now = Date.now();
   for (const payload of [

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, renameSync, rmSync, readdirSync, rmdirSync } from "node:fs";
+import { constants, existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, renameSync, rmSync, readdirSync, rmdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -225,6 +225,13 @@ function timestamp() {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
+/** `settings.json.bak-<time>`, numbered when that name is taken (two installs in the same second). */
+export function backupPath(settingsPath, stamp = timestamp()) {
+  let path = `${settingsPath}.bak-${stamp}`;
+  for (let i = 2; existsSync(path); i++) path = `${settingsPath}.bak-${stamp}-${i}`;
+  return path;
+}
+
 /**
  * Shared CLI flow for install/uninstall. `before`/`after` do the file work
  * around writing settings.json: install copies the hook before registering it,
@@ -264,8 +271,8 @@ export function run(transform, label, { beforeWrite, afterWrite } = {}) {
   if (before !== after) {
     mkdirSync(dirname(settingsPath), { recursive: true });
     if (existsSync(settingsPath)) {
-      const backup = `${settingsPath}.bak-${timestamp()}`;
-      copyFileSync(settingsPath, backup);
+      const backup = backupPath(settingsPath);
+      copyFileSync(settingsPath, backup, constants.COPYFILE_EXCL);
       console.log(`백업: ${backup}`);
     }
     writeFileSync(settingsPath, after + "\n");

@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -33,9 +33,16 @@ function line(o: { id?: string; session?: string; agent?: string; input?: number
   );
 }
 
-function tempDir(t: { after: (fn: () => void) => void }) {
+// Removed once the whole file is done, not per test: a test's server (or DB) is closed in its
+// own after-hook, and Windows can't delete a folder while the SQLite file in it is still open.
+const tempDirs: string[] = [];
+after(() => {
+  for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+});
+
+function tempDir() {
   const dir = mkdtempSync(join(tmpdir(), "ai-office-usage-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  tempDirs.push(dir);
   return dir;
 }
 
@@ -45,7 +52,7 @@ const models: ModelConfig = {
 };
 
 test("incremental reads: appended lines, a cut-off last line, replaced and truncated files", (t) => {
-  const dir = tempDir(t);
+  const dir = tempDir();
   const f = join(dir, "s1.jsonl");
   const second = line({ id: "m2" });
   writeFileSync(f, line({ id: "m1" }) + second.slice(0, 40)); // second line still being written
@@ -76,24 +83,27 @@ test("incremental reads: appended lines, a cut-off last line, replaced and trunc
 });
 
 test("only .jsonl files inside the projects root are readable", (t) => {
-  const dir = tempDir(t);
+  const dir = tempDir();
   const root = join(dir, "projects");
   mkdirSync(join(root, "p"), { recursive: true });
   writeFileSync(join(root, "p", "s.jsonl"), "");
   writeFileSync(join(dir, "outside.jsonl"), "");
   writeFileSync(join(root, "p", "notes.txt"), "");
-  symlinkSync(join(dir, "outside.jsonl"), join(root, "p", "link.jsonl"));
+  // a directory link pointing outside: "junction" needs no admin rights on Windows (a plain symlink elsewhere)
+  mkdirSync(join(dir, "elsewhere"));
+  writeFileSync(join(dir, "elsewhere", "x.jsonl"), "");
+  symlinkSync(join(dir, "elsewhere"), join(root, "p", "link"), "junction");
 
   assert.ok(allowedTranscript(root, join(root, "p", "s.jsonl")));
   assert.equal(allowedTranscript(root, join(dir, "outside.jsonl")), undefined);
   assert.equal(allowedTranscript(root, join(root, "p", "..", "..", "outside.jsonl")), undefined);
-  assert.equal(allowedTranscript(root, join(root, "p", "link.jsonl")), undefined, "a symlink pointing outside is refused");
+  assert.equal(allowedTranscript(root, join(root, "p", "link", "x.jsonl")), undefined, "a link pointing outside is refused");
   assert.equal(allowedTranscript(root, join(root, "p", "notes.txt")), undefined);
   assert.equal(allowedTranscript(root, "/etc/passwd"), undefined);
 });
 
 test("tracker: dedupes repeated message ids, follows sub-agents, tracks context, import is idempotent", (t) => {
-  const dir = tempDir(t);
+  const dir = tempDir();
   const root = join(dir, "projects");
   const proj = join(root, "-home-u-proj");
   mkdirSync(join(proj, "s1", "subagents"), { recursive: true });
@@ -132,7 +142,7 @@ test("tracker: dedupes repeated message ids, follows sub-agents, tracks context,
 });
 
 test("server: a hook event's transcript is followed and usage reaches clients; /usage/import scans the rest", async (t) => {
-  const dir = tempDir(t);
+  const dir = tempDir();
   const root = join(dir, "projects");
   const proj = join(root, "-home-u-proj");
   mkdirSync(proj, { recursive: true });
