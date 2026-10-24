@@ -266,7 +266,7 @@ function limitsReport(ts: number, five = 23.5) {
   return { v: 1, ts, fiveHour: { usedPercentage: five, resetsAt: ts + 60 * MIN }, sevenDay: { usedPercentage: 41, resetsAt: ts + 3 * DAY } };
 }
 
-test("POST /limits: the status line's report is broadcast, kept across restarts, and older ones ignored", async (t) => {
+test("POST /limits: reports are merged and broadcast, kept across restarts, and stale ones ignored", async (t) => {
   const dbPath = tempDb(t);
   const first = await server(dbPath);
   assert.equal((await snapshot(first)).limits, null, "nothing before the first report");
@@ -281,8 +281,8 @@ test("POST /limits: the status line's report is broadcast, kept across restarts,
   );
   assert.equal((await first.inject({ method: "POST", url: "/limits", payload: fromHook as object })).statusCode, 204);
   assert.equal((await first.inject({ method: "POST", url: "/limits", payload: limitsReport(now) })).statusCode, 204);
-  // a late, older report (another session's status line) doesn't win
-  assert.equal((await first.inject({ method: "POST", url: "/limits", payload: limitsReport(now - 5000, 99) })).statusCode, 204);
+  // an idle session re-sending older, lower numbers (with a fresh ts) changes nothing
+  assert.equal((await first.inject({ method: "POST", url: "/limits", payload: limitsReport(now + 5000, 5) })).statusCode, 204);
   await new Promise((r) => setTimeout(r, 20));
   ws.terminate();
   const pushed = messages.filter((m) => m.type === "limits");

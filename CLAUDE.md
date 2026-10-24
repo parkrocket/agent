@@ -107,7 +107,7 @@ async hook 때문에 생기는 경우도 처리한다:
 
 **요금제 한도** (`hooks/limits.mjs`, `hooks/ai-office-statusline.mjs`, `packages/shared/src/limits.ts`, `apps/server/src/routes/limits.ts`): Pro/Max의 5시간·주간 한도는 hook 입력에 없고 상태 줄 입력(`rate_limits`)에만 있다. 그래서 선택 설치하는 상태 줄 스크립트를 쓴다.
 - **스크립트:** 터미널에 `모델 · ctx % · 5h % (남은 시간) · 주간 % (초기화 시각)` 한 줄을 출력하고, `POST /limits`로 `PlanLimits {v, ts, fiveHour?, sevenDay?}`(시각은 epoch ms)를 보낸다. hook과 같은 규칙(1.5초 강제 종료, fetch 300ms, 항상 exit 0)을 따르되, stdout은 상태 줄 표시용이라 쓴다. 갱신은 Claude Code의 이벤트와 `refreshInterval: 60`초다.
-- **서버:** 스키마가 `.strict()`이고, 초기화 시각이 보고 시각에서 8일 넘게 떨어지면 거부한다. 계정 전체 값이라 `ts`가 가장 최근인 보고 하나만 남긴다(늦게 온 옛 보고는 무시). `kv` 테이블에 저장해 재시작해도 남고, `snapshot.limits`(없으면 null)와 `{type:"limits"}`로 보낸다.
+- **서버:** 스키마가 `.strict()`이고, 초기화 시각이 보고 시각에서 8일 넘게 떨어지면 거부한다. 계정 전체 값이지만 세션마다 **자기 마지막 API 응답 시점의 값**을 보내고, 쉬는 세션도 `refreshInterval`마다 옛 값을 새 `ts`로 다시 보낸다(초기화 시각이 지난 창은 빠진 채로). 그래서 최신 보고가 이기는 방식은 화면이 세션 사이를 오간다(실제로 겪음). `mergeLimits`가 창마다 합친다: 초기화 시각이 30분 넘게 늦으면 새 창, 같은 창이면 더 높은 사용률(창 안에서 사용률은 줄지 않음)이 이기고, 보고에 없는 창은 유지한다. `ts`는 보고가 모든 창에서 같거나 앞설 때만 갱신해, 옛 값이 "방금 기준"으로 보이지 않게 한다. 바뀐 게 없으면 같은 객체를 돌려줘 저장·전송을 건너뛴다. `kv` 테이블에 저장해 재시작해도 남고, `snapshot.limits`(없으면 null)와 `{type:"limits"}`로 보낸다.
 - **웹:** `LimitsBadge`(상단)와 사용량 패널 맨 위에 표시한다. 30초마다 다시 그려 남은 시간을 갱신하고, `resetsAt`이 지나면 "초기화됨", 보고가 15분 넘게 없으면 흐리게 한다. 색 기준은 컨텍스트 게이지와 같다(`limitLevel`).
 - **버전:** `LIMITS_VERSION`은 `hooks/limits.mjs`와 `limits.ts`에 있고 테스트가 비교한다.
 - **설치:** `statusLine`은 하나뿐이라, 다른 상태 줄이 있으면 `--replace` 없이는 멈춘다. 제거는 command에 `ai-office-statusline.mjs`가 있을 때만 한다. `pnpm status`가 설치 상태를 보여 준다.

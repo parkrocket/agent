@@ -1,10 +1,11 @@
 import type { FastifyInstance } from "fastify";
-import { PlanLimitsSchema, type PlanLimits } from "@ai-office/shared";
+import { PlanLimitsSchema, mergeLimits, type PlanLimits } from "@ai-office/shared";
 import type { EventDb } from "../db";
 
 /**
  * `POST /limits` from the status line script: plan rate limits (numbers only).
- * Account-wide, so only the newest report is kept; an older one arriving late is dropped.
+ * Every session reports, idle ones with stale numbers, so reports are merged
+ * window by window (`mergeLimits`) rather than the latest one winning.
  */
 export function registerLimitsRoutes(
   app: FastifyInstance,
@@ -15,11 +16,12 @@ export function registerLimitsRoutes(
     if (!parsed.success) return reply.code(400).send({ error: "invalid limits", issues: parsed.error.issues });
     // Reply before processing so the status line never waits on us.
     reply.code(204).send();
-    const limits = parsed.data;
-    if ((deps.current()?.ts ?? -Infinity) >= limits.ts) return;
+    const current = deps.current();
+    const merged = mergeLimits(current, parsed.data);
+    if (merged === current) return;
     try {
-      deps.db.setLimits(limits);
-      deps.set(limits);
+      deps.db.setLimits(merged);
+      deps.set(merged);
     } catch (err) {
       app.log.error({ err }, "failed to store limits");
     }

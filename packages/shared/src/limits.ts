@@ -37,6 +37,57 @@ export const PlanLimitsSchema = z
   );
 export type PlanLimits = z.infer<typeof PlanLimitsSchema>;
 
+/**
+ * Resets closer than this are the same window. A new window only starts after
+ * the old one resets, so its reset is at least ~5 hours (or a week) later.
+ */
+const SAME_WINDOW_MS = 30 * 60_000;
+
+type WindowKey = "fiveHour" | "sevenDay";
+const WINDOW_KEYS: WindowKey[] = ["fiveHour", "sevenDay"];
+
+/** -1: `next` is stale (older window, or lower usage in the same one), 0: same, 1: newer. */
+function compareWindow(prev: LimitWindow, next: LimitWindow): -1 | 0 | 1 {
+  if (next.resetsAt > prev.resetsAt + SAME_WINDOW_MS) return 1;
+  if (next.resetsAt < prev.resetsAt - SAME_WINDOW_MS) return -1;
+  return next.usedPercentage > prev.usedPercentage ? 1 : next.usedPercentage < prev.usedPercentage ? -1 : 0;
+}
+
+/**
+ * Folds a status line report into the current limits, window by window.
+ *
+ * Each Claude Code session reports what it got with its own last API
+ * response, and an idle session keeps re-sending that (with a fresh `ts`, and
+ * minus any window whose reset has passed). So the newest report is not the
+ * newest data. Usage within a window only grows, which gives a total order:
+ * a later window wins, then higher usage in the same window. A window missing
+ * from the report is kept. `ts` advances only when the report agrees with or
+ * improves on every window it carries, so a stale session can't make old data
+ * look fresh. Returns `prev` itself when nothing changed. Pure.
+ */
+export function mergeLimits(prev: PlanLimits | null, next: PlanLimits): PlanLimits {
+  if (!prev) return next;
+  const merged: PlanLimits = { ...prev };
+  let changed = false;
+  let stale = false;
+  for (const key of WINDOW_KEYS) {
+    const n = next[key];
+    if (!n) continue;
+    const p = prev[key];
+    const order = p ? compareWindow(p, n) : 1;
+    if (order < 0) stale = true;
+    if (order > 0) {
+      merged[key] = n;
+      changed = true;
+    }
+  }
+  if (!stale && next.ts > prev.ts) {
+    merged.ts = next.ts;
+    changed = true;
+  }
+  return changed ? merged : prev;
+}
+
 export type LimitLevel = "ok" | "warn" | "danger";
 
 /** Same thresholds as the context gauge: orange from 80%, red from 95%. */
