@@ -1,9 +1,18 @@
 import * as THREE from "three";
 import { CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 import type { RoomActivity, RoomState, SessionMap } from "@ai-office/shared";
-import { Agent } from "./Agent";
+import { Agent, type Detail } from "./Agent";
 import { CHARACTERS, cloneFurniture, type Assets, type CharacterName, type FurnitureName } from "./assets";
-import { DOOR_TILE_Z, podDesks, podOrigin, roomSize, standingSpot, type DeskSpot } from "./layout";
+import {
+  DOOR_GAP,
+  podDesks,
+  podOrigin,
+  roomSize,
+  standingSpot,
+  type DeskSpot,
+  type Point,
+  type RoomPlacement,
+} from "./layout";
 import { SCREEN_MODE, screenMaterial } from "./screens";
 import { visualStatus } from "./status";
 
@@ -74,7 +83,10 @@ interface DeskView {
   screen: THREE.Mesh;
 }
 
-/** One project room: a diorama with north and west walls, a pod per session, and its characters. */
+const STUB_H = 0.22;
+const STUB_T = 0.08;
+
+/** One project room in the building: low walls, a pod per session, and its characters. */
 export class RoomView {
   readonly group = new THREE.Group();
   size = roomSize(1);
@@ -90,7 +102,12 @@ export class RoomView {
   private readonly leaving = new Set<Agent>();
   private readonly title: CSS2DObject;
   private readonly emptyLabel: CSS2DObject;
+  /** Stable building order: rooms keep their place as others come and go. */
+  order = 0;
   private podCount = -1;
+  private rowEnd = false;
+  /** Elevator-to-door route in room-local coordinates. */
+  private entry: Point[] = [];
   private activity: RoomActivity = "empty";
   private dimmed = false;
 
@@ -120,9 +137,21 @@ export class RoomView {
     return o;
   }
 
+  /** Where the building put this room, and the route from the elevator to its door (world coordinates). */
+  setPlacement(p: RoomPlacement, entryWorld: Point[]) {
+    this.group.position.set(p.x, 0, p.z);
+    this.entry = entryWorld.map((q) => ({ x: q.x - p.x, z: q.z - p.z }));
+    for (const a of this.agents.values()) a.entry = this.entry;
+    if (p.rowEnd !== this.rowEnd) {
+      this.rowEnd = p.rowEnd;
+      this.rebuild(Math.max(1, this.podCount));
+    }
+  }
+
   /** Reconciles characters with the room's present sessions. `firstPaint` seats everyone without walking in. */
   sync({ room, sessions, label, activity }: RoomInput, firstPaint: boolean) {
     this.activity = activity;
+    this.order = room.firstSeenAt;
     const titleEl = this.title.element;
     titleEl.textContent = `${activity === "waiting" ? "! " : ""}${label}`;
     titleEl.className = `o3-room-title o3-room-${activity}`;
@@ -152,7 +181,7 @@ export class RoomView {
         const lead = agent.kind === "main";
         const name = lead ? (multi ? `팀장 ${session.sessionId.slice(0, 4)}` : "팀장") : (agent.type ?? "직원");
         const look = lead ? LEAD_LOOK : staffLook(agent.key);
-        const a = new Agent(this.assets, agent, look, home, spot?.yaw, !firstPaint, name);
+        const a = new Agent(this.assets, agent, look, home, spot?.yaw, !firstPaint, name, this.entry);
         a.deskKey = spot ? deskKey(pod, agent.desk) : undefined;
         this.group.add(a.root);
         this.agents.set(key, a);
@@ -174,30 +203,33 @@ export class RoomView {
     this.desks.clear();
     this.pickables.length = 0;
 
-    // base slab and floor
-    const slabMat = this.own(new THREE.MeshStandardMaterial({ color: 0x3a3343, roughness: 0.9 }));
-    const slab = new THREE.Mesh(new THREE.BoxGeometry(w + 0.3, 0.4, d + 0.3), slabMat);
-    slab.position.set(w / 2, -0.2, d / 2);
-    slab.receiveShadow = true;
+    // wooden floor (the building provides the slab and the corridor floor around it)
     const map = planks().clone();
     map.repeat.set(w / 2, d / 2);
     map.needsUpdate = true;
     const floorMat = this.own(new THREE.MeshStandardMaterial({ map, roughness: 0.85 }));
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), floorMat);
-    floor.position.set(w / 2, 0.002, d / 2);
+    floor.position.set(w / 2, 0.006, d / 2);
     floor.receiveShadow = true;
-    this.structure.add(slab, floor);
-    this.pickables.push(slab, floor);
-    for (const p of this.pickables) p.userData.roomKey = this.key;
+    this.structure.add(floor);
+    this.pickables.push(floor);
+    floor.userData.roomKey = this.key;
 
-    // walls: north (windows every few tiles) and west (door near the back)
-    for (let i = 0; i < w; i++) {
-      const windowed = i >= 2 && i < w - 2 && i % 2 === 0;
-      this.place(windowed ? "wallWindow" : "wall", this.structure, i + 0.5, 0, 0.03);
-    }
-    for (let j = 0; j < d; j++) {
-      this.place(j === DOOR_TILE_Z ? "wallDoorway" : "wall", this.structure, 0.03, 0, j + 0.5, Math.PI / 2);
-    }
+    // low walls ("walls down"): north with the door gap, west, south; east only at the end of a row
+    const stubMat = this.own(new THREE.MeshStandardMaterial({ color: 0xe8e0cf, roughness: 0.8 }));
+    const stub = (x0: number, z0: number, x1: number, z1: number) => {
+      const along = x1 - x0 > z1 - z0;
+      const len = along ? x1 - x0 : z1 - z0;
+      const m = new THREE.Mesh(new THREE.BoxGeometry(along ? len : STUB_T, STUB_H, along ? STUB_T : len), stubMat);
+      m.position.set((x0 + x1) / 2, STUB_H / 2, (z0 + z1) / 2);
+      m.castShadow = m.receiveShadow = true;
+      this.structure.add(m);
+    };
+    stub(0, 0, DOOR_GAP[0], 0);
+    stub(DOOR_GAP[1], 0, w, 0);
+    stub(0, 0, 0, d);
+    stub(0, d, w, d);
+    if (this.rowEnd) stub(w, 0, w, d);
 
     // decoration along the east side and corners
     this.place("bookcaseOpen", this.structure, w - 0.8, 0, 0.2);
@@ -208,7 +240,7 @@ export class RoomView {
     this.place("pottedPlant", this.structure, w - 0.4, 0, d - 0.4);
     this.place("pottedPlant", this.structure, 0.45, 0, d - 0.4);
     this.place("coatRackStanding", this.structure, 0.35, 0, 2.6);
-    this.place("trashcan", this.structure, 0.35, 0, 0.35);
+    this.place("trashcan", this.structure, 0.35, 0, 3.3);
 
     for (let pod = 0; pod < pods; pod++) {
       const o = podOrigin(pod);
@@ -218,7 +250,7 @@ export class RoomView {
       for (const spot of podDesks(pod)) this.addDesk(spot);
     }
 
-    this.title.position.set(0.1, 1.45, 0);
+    this.title.position.set(0.15, 0.35, 0.1);
     this.emptyLabel.position.set(w / 2, 0.8, d / 2);
     if (this.dimmed) this.applyDim(true);
   }
@@ -252,6 +284,12 @@ export class RoomView {
     this.desks.set(deskKey(spot.pod, spot.index), { spot, screen });
   }
 
+  /** World positions of everyone in or leaving this room (for the elevator doors). */
+  walkers(): Point[] {
+    const o = this.group.position;
+    return [...this.agents.values(), ...this.leaving].map((a) => ({ x: a.root.position.x + o.x, z: a.root.position.z + o.z }));
+  }
+
   private applyDim(on: boolean) {
     for (const m of this.materials.values()) {
       const mat = m as THREE.MeshStandardMaterial;
@@ -262,7 +300,7 @@ export class RoomView {
     }
   }
 
-  tick(dtMs: number, now: number, detail: boolean, shown: boolean) {
+  tick(dtMs: number, now: number, detail: Detail, shown: boolean) {
     const empty = this.activity === "empty" && this.agents.size === 0 && this.leaving.size === 0;
     if (empty !== this.dimmed) {
       this.dimmed = empty;

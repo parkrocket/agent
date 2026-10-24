@@ -70,3 +70,7 @@ body {
 @keyframes o3-bounce { from { transform: translateY(0); } to { transform: translateY(-5px); } }
 @keyframes o3-float { from { transform: translate(0, 0); opacity: 1; } to { transform: translate(8px, -14px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .o3-badge, .o3-zzz { animation: none; } }
+.o3-area {
+  padding: 1px 8px; border-radius: 6px; background: rgba(20, 24, 36, 0.55); color: #e8ecf4;
+  font: 600 11px ui-sans-serif, system-ui, "Nanum Gothic", sans-serif; white-space: nowrap; letter-spacing: 0.05em;
+}
