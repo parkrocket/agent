@@ -16,7 +16,6 @@ export const FURNITURE = [
   "computerMouse",
   "wall",
   "wallWindow",
-  "wallDoorway",
   "bookcaseOpen",
   "pottedPlant",
   "plantSmall1",
@@ -26,6 +25,21 @@ export const FURNITURE = [
   "trashcan",
   "coatRackStanding",
   "sideTable",
+  // shared wing: reception, lounge, kitchenette, meeting room
+  "bench",
+  "loungeSofa",
+  "loungeChair",
+  "tableCoffee",
+  "rugRound",
+  "plantSmall2",
+  "kitchenCabinet",
+  "kitchenSink",
+  "kitchenFridgeSmall",
+  "table",
+  "chair",
+  "televisionModern",
+  "cardboardBoxClosed",
+  "cardboardBoxOpen",
 ] as const;
 export type FurnitureName = (typeof FURNITURE)[number];
 

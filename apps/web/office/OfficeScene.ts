@@ -1,40 +1,42 @@
 import * as THREE from "three";
 import { CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import { loadAssets, type Assets } from "./assets";
+import { Building } from "./Building";
+import { buildingLayout, entryPath } from "./layout";
+import type { Detail } from "./Agent";
 import { RoomView, type RoomInput } from "./RoomView";
 import { updateScreens } from "./screens";
 
 export type SceneMode = "lobby" | "focus";
 
 export interface SceneInput {
-  /** Every room (kept alive so characters keep walking), in display order. */
+  /** Every room; all of them are drawn in the building. */
   rooms: RoomInput[];
-  /** Keys of the rooms to show: all lobby rooms, or just the focused one. */
+  /** Focus mode: the one room to frame (the lobby frames the whole building). */
   visible: string[];
   mode: SceneMode;
 }
-
-/** Gap between rooms in the lobby, in tiles. */
-const GAP = 3;
 /**
  * View direction (from target towards the camera): mostly south, a little east,
  * and up. Turning ~25° off a true 45° isometric makes rooms read wider than
  * tall, which suits a wide canvas and lets them be drawn larger.
  */
 const VIEW_DIR = new THREE.Vector3(0.62, 1.25, 1.35).normalize();
-/** Speech bubbles and name tags only appear once a tile is at least this many pixels tall. */
-const DETAIL_PX_PER_TILE = 34;
+/** On the whole-floor view, leads' bubbles and names appear once a tile is at least this many pixels tall. */
+const DETAIL_PX_PER_TILE = 22;
 
 /**
- * All rooms in one Three.js scene under a fixed isometric orthographic camera.
- * The lobby lays rooms out in a grid and frames them all; focus frames one
- * room. The camera eases between framings, so clicking a room flies into it.
+ * The whole office as one building under a fixed isometric orthographic
+ * camera. Every room is always drawn in place; the lobby frames the whole
+ * floor and focus frames one room, with the camera easing between them, so
+ * clicking a room zooms into it with its neighbours still around it.
  */
 export class OfficeScene {
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400);
   private readonly sun: THREE.DirectionalLight;
   private readonly rooms = new Map<string, RoomView>();
+  private readonly building: Building;
   private readonly raycaster = new THREE.Raycaster();
   private readonly resizeObserver: ResizeObserver;
   private input: SceneInput = { rooms: [], visible: [], mode: "lobby" };
@@ -53,6 +55,8 @@ export class OfficeScene {
     private readonly labels: CSS2DRenderer,
     private readonly onOpenRoom: (key: string) => void,
   ) {
+    this.building = new Building(assets);
+    this.scene.add(this.building.group);
     this.scene.add(new THREE.HemisphereLight(0xfff1dd, 0x39405a, 1.6));
     this.sun = new THREE.DirectionalLight(0xfff3e0, 2.2);
     this.sun.castShadow = true;
@@ -128,23 +132,20 @@ export class OfficeScene {
     this.layout();
   }
 
-  /** Places visible rooms in a grid and sets the camera goal to frame them. */
+  /** Places rooms in the building (stable order) and sets the camera goal. */
   private layout() {
-    const visible = this.input.visible.flatMap((k) => this.rooms.get(k) ?? []);
-    const shown = new Set(visible);
-    for (const view of this.rooms.values()) view.group.visible = shown.has(view);
-    if (!visible.length) return;
+    const ordered = [...this.rooms.values()].sort((a, b) => a.order - b.order || a.key.localeCompare(b.key));
+    const b = buildingLayout(ordered.map((v) => ({ key: v.key, w: v.size.w, d: v.size.d })));
+    this.building.update(b);
+    for (const v of ordered) v.setPlacement(b.rooms.get(v.key)!, entryPath(b, v.key));
 
-    const aspect = this.aspect();
-    let best: { cols: number; height: number; centre: THREE.Vector3 } | undefined;
-    for (let cols = 1; cols <= visible.length; cols++) {
-      this.arrange(visible, cols);
-      const fit = this.frameFor(visible, aspect);
-      if (!best || fit.height < best.height - 1e-6) best = { cols, ...fit };
-    }
-    this.arrange(visible, best!.cols);
-    this.goal.target.copy(best!.centre);
-    this.goal.height = best!.height;
+    const focus = this.input.mode === "focus" ? this.rooms.get(this.input.visible[0] ?? "") : undefined;
+    const box = focus
+      ? { x0: focus.group.position.x, z0: focus.group.position.z - 0.6, x1: focus.group.position.x + focus.size.w, z1: focus.group.position.z + focus.size.d, h: 1 }
+      : { x0: 0, z0: 0, x1: b.w, z1: b.d, h: 1.4 };
+    const fit = this.frameFor(box, this.aspect());
+    this.goal.target.copy(fit.centre);
+    this.goal.height = fit.height;
     if (this.snapNext) {
       this.view.target.copy(this.goal.target);
       this.view.height = this.goal.height;
@@ -152,21 +153,8 @@ export class OfficeScene {
     }
   }
 
-  private arrange(visible: RoomView[], cols: number) {
-    let z = 0;
-    for (let row = 0; row * cols < visible.length; row++) {
-      const rowRooms = visible.slice(row * cols, row * cols + cols);
-      let x = 0;
-      for (const v of rowRooms) {
-        v.group.position.set(x, 0, z);
-        x += v.size.w + GAP;
-      }
-      z += Math.max(...rowRooms.map((v) => v.size.d)) + GAP;
-    }
-  }
-
-  /** World height the camera must show to fit these rooms, and the point to look at. */
-  private frameFor(visible: RoomView[], aspect: number) {
+  /** World height the camera must show to fit a box (floor rectangle + height), and the point to look at. */
+  private frameFor(box: { x0: number; z0: number; x1: number; z1: number; h: number }, aspect: number) {
     const cam = this.camera.clone();
     cam.position.copy(VIEW_DIR).multiplyScalar(100);
     cam.lookAt(0, 0, 0);
@@ -174,34 +162,21 @@ export class OfficeScene {
     const inv = cam.matrixWorldInverse;
     const min = new THREE.Vector3(Infinity, Infinity, Infinity);
     const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
-    const worldMin = new THREE.Vector3(Infinity, Infinity, Infinity);
-    const worldMax = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
     const p = new THREE.Vector3();
-    for (const v of visible) {
-      const o = v.group.position;
-      for (const [x, y, z] of [
-        [0, -0.4, 0],
-        [v.size.w, -0.4, 0],
-        [0, -0.4, v.size.d],
-        [v.size.w, -0.4, v.size.d],
-        [0, 1.7, 0],
-        [v.size.w, 1.7, 0],
-        [0, 1.7, v.size.d],
-      ] as const) {
-        p.set(o.x + x, y, o.z + z);
-        worldMin.min(p);
-        worldMax.max(p);
-        min.min(p.clone().applyMatrix4(inv));
-        max.max(p.clone().applyMatrix4(inv));
-      }
-    }
+    for (const x of [box.x0, box.x1])
+      for (const z of [box.z0, box.z1])
+        for (const y of [-0.5, box.h]) {
+          p.set(x, y, z).applyMatrix4(inv);
+          min.min(p);
+          max.max(p);
+        }
     const w = max.x - min.x;
     const h = max.y - min.y;
     // The centre of the projected box, mapped back to the ground plane along the view direction.
     const mid = new THREE.Vector3((min.x + max.x) / 2, (min.y + max.y) / 2, (min.z + max.z) / 2).applyMatrix4(cam.matrixWorld);
     const t = mid.y / VIEW_DIR.y;
     const centre = mid.sub(VIEW_DIR.clone().multiplyScalar(t));
-    return { height: Math.max(h, w / aspect) * 1.08 + 0.6, centre };
+    return { height: Math.max(h, w / aspect) * 1.06 + 0.4, centre };
   }
 
   private aspect() {
@@ -242,24 +217,27 @@ export class OfficeScene {
     sc.updateProjectionMatrix();
 
     const pxPerTile = this.host.clientHeight / this.view.height;
-    const detail = this.input.mode === "focus" || pxPerTile >= DETAIL_PX_PER_TILE;
+    const detail: Detail =
+      this.input.mode === "focus" ? "full" : pxPerTile >= DETAIL_PX_PER_TILE ? "summary" : "none";
     const wall = Date.now();
     updateScreens(wall);
-    for (const view of this.rooms.values()) view.tick(dt, wall, detail, view.group.visible);
+    for (const view of this.rooms.values()) view.tick(dt, wall, detail, true);
+    this.building.tick(dt, [...this.rooms.values()].flatMap((v) => v.walkers()));
 
     this.renderer.render(this.scene, this.camera);
     this.labels.render(this.scene, this.camera);
   }
 
   private onClick = (e: MouseEvent) => {
-    if (this.input.mode !== "lobby") return;
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
-    const targets = [...this.rooms.values()].filter((v) => v.group.visible).flatMap((v) => v.pickables);
+    const targets = [...this.rooms.values()].flatMap((v) => v.pickables);
     const hit = this.raycaster.intersectObjects(targets, false)[0];
     const key = hit?.object.userData.roomKey as string | undefined;
+    // a room zooms in; anywhere else while zoomed in goes back to the whole floor
     if (key) this.onOpenRoom(key);
+    else if (this.input.mode === "focus") this.onOpenRoom("lobby");
   };
 
   destroy() {

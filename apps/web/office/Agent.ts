@@ -22,6 +22,12 @@ const RING_COLOR: Record<AgentStatus, number> = {
 
 type Mode = "entering" | "seated" | "leaving" | "gone";
 
+/**
+ * How much text to show: everything (zoomed into a room), a summary for the
+ * whole floor (leads, and anyone waiting on the user), or nothing but the "!".
+ */
+export type Detail = "full" | "summary" | "none";
+
 const ringGeometry = new THREE.RingGeometry(0.2, 0.27, 40).rotateX(-Math.PI / 2);
 const rotX = (a: number) => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), a);
 const rotZ = (a: number) => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), a);
@@ -38,6 +44,8 @@ export class Agent {
   /** Desk unit rotation when seated at a desk; undefined when standing. */
   deskYaw: number | undefined;
   deskKey: string | undefined;
+  /** Route from the elevator to just outside the room door (room-local); kept current by the room. */
+  entry: Point[];
   private readonly lead: boolean;
   private readonly model: THREE.Object3D;
   private readonly mixer: THREE.AnimationMixer;
@@ -58,10 +66,12 @@ export class Agent {
     deskYaw: number | undefined,
     walkIn: boolean,
     displayName: string,
+    entry: Point[],
   ) {
     this.agent = agent;
     this.home = home;
     this.deskYaw = deskYaw;
+    this.entry = entry;
     this.lead = agent.kind === "main";
 
     this.model = cloneCharacter(assets, look);
@@ -98,7 +108,8 @@ export class Agent {
     this.root.add(this.label);
 
     if (walkIn) {
-      this.path = pathFromDoor(home, this.lead);
+      // arrive by elevator, walk the corridor, come in through the door
+      this.path = pathFromDoor(home, this.lead, this.entry);
       const start = this.path.shift()!;
       this.root.position.set(start.x, 0, start.z);
       this.mode = "entering";
@@ -128,7 +139,7 @@ export class Agent {
 
   leave() {
     if (this.leaving) return;
-    this.path = pathToDoor(this.pos(), this.lead);
+    this.path = pathToDoor(this.pos(), this.lead, this.entry);
     this.mode = "leaving";
   }
 
@@ -137,7 +148,7 @@ export class Agent {
   }
 
   /** `shown` false when the room is hidden: CSS2D labels only honour their own visibility, not their parents'. */
-  update(dtMs: number, now: number, detail: boolean, shown: boolean) {
+  update(dtMs: number, now: number, detail: Detail, shown: boolean) {
     const walking = this.step(dtMs);
     const status = visualStatus(this.agent, now);
     const seated = this.mode === "seated" && this.deskYaw !== undefined;
@@ -170,7 +181,8 @@ export class Agent {
     this.ring.scale.setScalar(pulse);
 
     const showUi = shown && !this.leaving;
-    const text = showUi && detail && !walking ? bubbleText(this.agent, status, now) : undefined;
+    const talk = detail === "full" || (detail === "summary" && (this.lead || status === "waiting"));
+    const text = showUi && talk && !walking ? bubbleText(this.agent, status, now) : undefined;
     const cls = `o3-bubble o3-${status}${text ? "" : " o3-hidden"}`;
     if (text !== undefined && text !== this.shown.bubble) {
       this.el.bubble.textContent = text.length > 26 ? `${text.slice(0, 25)}…` : text;
@@ -183,7 +195,7 @@ export class Agent {
     this.el.badge.style.display = showUi && status === "waiting" && !walking ? "" : "none";
     this.el.zzz.style.display = showUi && status === "idle" && !walking && seated ? "" : "none";
     this.label.visible = showUi;
-    this.el.name.style.display = detail ? "" : "none";
+    this.el.name.style.display = detail === "full" || (detail === "summary" && this.lead) ? "" : "none";
   }
 
   /** Bone tweaks layered on top of the clips. */
@@ -235,11 +247,10 @@ export class Agent {
       }
     }
     if (!this.path.length) {
+      // a leaver has reached the elevator and rides away
       this.mode = this.mode === "leaving" ? "gone" : "seated";
       return false;
     }
-    // fade out through the door
-    if (this.mode === "leaving") this.root.visible = p.x > -0.3;
     return true;
   }
 
