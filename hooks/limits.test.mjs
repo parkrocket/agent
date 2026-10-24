@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { LIMITS_VERSION, extractLimits, statusLine } from "./limits.mjs";
 
 const NOW = 1_800_000_000_000;
@@ -74,7 +75,7 @@ test("version matches the shared schema", () => {
 /** Runs the real script with `stdin`, posting to `url`. */
 function runScript(stdin, url) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [new URL("./ai-office-statusline.mjs", import.meta.url).pathname], {
+    const child = spawn(process.execPath, [fileURLToPath(new URL("./ai-office-statusline.mjs", import.meta.url))], {
       env: { ...process.env, AI_OFFICE_LIMITS_URL: url },
     });
     let stdout = "";

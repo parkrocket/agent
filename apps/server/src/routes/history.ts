@@ -1,9 +1,8 @@
 import type { FastifyInstance } from "fastify";
-import type { HistoryEvents, HistoryList } from "@ai-office/shared";
+import { dirName, type HistoryEvents, type HistoryList } from "@ai-office/shared";
 import type { EventDb } from "../db";
 import type { OfficeRegistry } from "../office";
 
-const basename = (cwd: string) => cwd.replace(/\\/g, "/").replace(/\/+$/, "").split("/").at(-1) || cwd;
 
 /** Past sessions for replay. Read-only; the live office state is never touched. */
 export function registerHistoryRoutes(app: FastifyInstance, deps: { db: EventDb; office: OfficeRegistry }) {
@@ -12,7 +11,7 @@ export function registerHistoryRoutes(app: FastifyInstance, deps: { db: EventDb;
     return {
       sessions: deps.db.historySessions().map((s) => ({
         ...s,
-        ...(s.project || !s.cwd ? {} : { project: basename(s.cwd) }),
+        ...(s.project || !s.cwd ? {} : { project: dirName(s.cwd) }),
         replayable: s.events > 0,
         live: !!live[s.sessionId] && !live[s.sessionId]!.offDuty,
       })),

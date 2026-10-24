@@ -51,7 +51,14 @@ function launch(name, args, cwd, env) {
   const fd = openSync(log, "a");
   writeFileSync(fd, `\n--- ${new Date().toISOString()} start ${name} ---\n`);
   // detached: its own process group, so `stop` can end it with everything it spawned
-  const child = spawn(process.execPath, args, { cwd, env: { ...process.env, ...env }, detached: true, stdio: ["ignore", fd, fd] });
+  // (on Windows: outlives the terminal; windowsHide keeps it from opening a console window)
+  const child = spawn(process.execPath, args, {
+    cwd,
+    env: { ...process.env, ...env },
+    detached: true,
+    windowsHide: true,
+    stdio: ["ignore", fd, fd],
+  });
   child.unref();
   writeFileSync(pid, String(child.pid));
   return child.pid;
@@ -123,7 +130,12 @@ async function stop() {
   for (const name of [...NAMES].reverse()) {
     const file = procFiles(name).pid;
     const pid = readPid(file);
-    if (alive(pid)) {
+    if (alive(pid) && process.platform === "win32") {
+      // No process groups or SIGTERM on Windows: end the tree. SQLite (WAL) keeps every committed event.
+      spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+      for (let i = 0; i < 20 && alive(pid); i++) await wait(250);
+      stopped++;
+    } else if (alive(pid)) {
       const signal = (sig) => {
         try {
           process.kill(-pid, sig); // the whole group

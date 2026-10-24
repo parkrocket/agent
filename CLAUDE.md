@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Claude Code 세션을 3D 사무실 건물로 실시간 시각화하는 "AI 오피스". 메인 에이전트는 팀장, 서브에이전트는 직원 캐릭터다. 프로젝트(cwd)마다 방이 하나씩 있고, 캐릭터는 엘리베이터로 출퇴근하며 도구를 쓰는 모습, 손 들기(승인 대기), 컨텍스트 사용량 게이지로 상태를 보여준다. 단계별 진행은 아래 "진행 상황"을 본다.
 
-환경은 Windows WSL2(Ubuntu)이고, 브라우저는 Windows에서 `localhost`로 접속한다.
+환경은 Windows다. 사용자는 Windows 터미널과 VS Code 확장(Windows)에서 Claude Code를 쓰므로, AI 오피스도 Windows의 Node로 `C:\Users\parkseonghyeon\projects\agent`에서 돈다(hook·상태 줄은 Windows `%USERPROFILE%\.claude\settings.json`에 설치). 예전에 쓰던 WSL2(Ubuntu) 사본(`~/projects/agent`)도 있다. 코드는 Linux와 Windows 양쪽에서 테스트가 통과해야 한다.
+- **Windows에서 다를 점:** Claude Code는 hook과 상태 줄 명령을 Git Bash로 실행한다(따옴표 안 백슬래시 경로는 그대로 유지됨). 프로세스 그룹·SIGTERM이 없어 `pnpm stop`은 `taskkill /T /F`를 쓴다. 열린 SQLite 파일이 든 폴더는 지울 수 없고, 심볼릭 링크는 관리자 권한이 필요하다(테스트는 junction 사용). 경로는 `dirName`처럼 `/`와 `\`를 모두 처리하고, 드라이브 문자는 소문자(`c:\`)로 올 수도 있다.
 
 ## 설계 원칙
 
@@ -107,7 +108,7 @@ async hook 때문에 생기는 경우도 처리한다:
 
 **요금제 한도** (`hooks/limits.mjs`, `hooks/ai-office-statusline.mjs`, `packages/shared/src/limits.ts`, `apps/server/src/routes/limits.ts`): Pro/Max의 5시간·주간 한도는 hook 입력에 없고 상태 줄 입력(`rate_limits`)에만 있다. 그래서 선택 설치하는 상태 줄 스크립트를 쓴다.
 - **스크립트:** 터미널에 `모델 · ctx % · 5h % (남은 시간) · 주간 % (초기화 시각)` 한 줄을 출력하고, `POST /limits`로 `PlanLimits {v, ts, fiveHour?, sevenDay?}`(시각은 epoch ms)를 보낸다. hook과 같은 규칙(1.5초 강제 종료, fetch 300ms, 항상 exit 0)을 따르되, stdout은 상태 줄 표시용이라 쓴다. 갱신은 Claude Code의 이벤트와 `refreshInterval: 60`초다.
-- **서버:** 스키마가 `.strict()`이고, 초기화 시각이 보고 시각에서 8일 넘게 떨어지면 거부한다. 계정 전체 값이라 `ts`가 가장 최근인 보고 하나만 남긴다(늦게 온 옛 보고는 무시). `kv` 테이블에 저장해 재시작해도 남고, `snapshot.limits`(없으면 null)와 `{type:"limits"}`로 보낸다.
+- **서버:** 스키마가 `.strict()`이고, 초기화 시각이 보고 시각에서 8일 넘게 떨어지면 거부한다. 계정 전체 값이지만 세션마다 **자기 마지막 API 응답 시점의 값**을 보내고, 쉬는 세션도 `refreshInterval`마다 옛 값을 새 `ts`로 다시 보낸다(초기화 시각이 지난 창은 빠진 채로). 그래서 최신 보고가 이기는 방식은 화면이 세션 사이를 오간다(실제로 겪음). `mergeLimits`가 창마다 합친다: 초기화 시각이 30분 넘게 늦으면 새 창, 같은 창이면 더 높은 사용률(창 안에서 사용률은 줄지 않음)이 이기고, 보고에 없는 창은 유지한다. `ts`는 보고가 모든 창에서 같거나 앞설 때만 갱신해, 옛 값이 "방금 기준"으로 보이지 않게 한다. 바뀐 게 없으면 같은 객체를 돌려줘 저장·전송을 건너뛴다. `kv` 테이블에 저장해 재시작해도 남고, `snapshot.limits`(없으면 null)와 `{type:"limits"}`로 보낸다.
 - **웹:** `LimitsBadge`(상단)와 사용량 패널 맨 위에 표시한다. 30초마다 다시 그려 남은 시간을 갱신하고, `resetsAt`이 지나면 "초기화됨", 보고가 15분 넘게 없으면 흐리게 한다. 색 기준은 컨텍스트 게이지와 같다(`limitLevel`).
 - **버전:** `LIMITS_VERSION`은 `hooks/limits.mjs`와 `limits.ts`에 있고 테스트가 비교한다.
 - **설치:** `statusLine`은 하나뿐이라, 다른 상태 줄이 있으면 `--replace` 없이는 멈춘다. 제거는 command에 `ai-office-statusline.mjs`가 있을 때만 한다. `pnpm status`가 설치 상태를 보여 준다.
@@ -199,6 +200,7 @@ async hook 때문에 생기는 경우도 처리한다:
 | 실사용 | hook 사본 설치·이벤트 버전 검사, `pnpm start/stop/status`(프로덕션), README 정리 | #9 |
 | 안정화 | 서버 응답 정규화(버전 어긋남에도 페이지가 깨지지 않음) | #10 |
 | 한도 | 상태 줄로 요금제 5시간·주간 한도 표시(터미널·오피스) | #11 |
+| Windows | Windows Node에서 직접 실행(시작·종료, 경로, 테스트), 설정 백업 덮어쓰기 수정 | #13 |
 
 ## 다음 할 일
 

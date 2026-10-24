@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import {
   ZERO_TOKENS,
   addTokens,
+  dirName,
   formatTokens,
   roomLabels,
   type AgentUsage,
@@ -93,7 +94,7 @@ export function UsagePanel({
   const list = Object.values(usage.sessions).sort((a, b) => b.lastTs - a.lastTs);
   for (const s of list) {
     const key = sessions[s.sessionId]?.room ?? s.cwd ?? "?";
-    const label = labels[key] ?? (key === "?" ? "알 수 없음" : key.split("/").filter(Boolean).at(-1) ?? key);
+    const label = labels[key] ?? (key === "?" ? "알 수 없음" : dirName(key));
     const sum = sumAgents(s.agents);
     const r = byRoom.get(key) ?? { label, tokens: ZERO_TOKENS, cost: 0, sessions: 0 };
     byRoom.set(key, { label, tokens: addTokens(r.tokens, sum.tokens), cost: r.cost + sum.cost, sessions: r.sessions + 1 });
@@ -190,7 +191,7 @@ export function UsagePanel({
               const sum = sumAgents(s.agents);
               const live = sessions[s.sessionId];
               const key = live?.room ?? s.cwd;
-              const label = key ? (labels[key] ?? key.split("/").filter(Boolean).at(-1)) : "알 수 없음";
+              const label = key ? (labels[key] ?? dirName(key)) : "알 수 없음";
               return (
                 <tr key={s.sessionId} className={live && !live.offDuty ? styles.live : ""} title={`${s.sessionId} · ${key ?? ""}`}>
                   <td>

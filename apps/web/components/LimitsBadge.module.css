@@ -1,5 +1,5 @@
 /* Same palette as the context gauge (.o3-gauge in globals.css). */
-.badge { display: flex; align-items: center; gap: 12px; font-size: 12px; white-space: nowrap; }
+.badge { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 12px; white-space: nowrap; }
 .stale { opacity: 0.55; }
 .item { display: flex; align-items: center; gap: 5px; }
 .label { color: var(--muted); }

@@ -411,6 +411,11 @@ export function roomActivity(room: RoomState, sessions: SessionMap): RoomActivit
   return "idle";
 }
 
+/** Last segment of a POSIX or Windows path ("/home/u/shop" or C:\work\shop → "shop"). */
+export function dirName(path: string): string {
+  return path.replace(/[\\/]+$/, "").split(/[\\/]/).at(-1) || path;
+}
+
 /** Display names: the directory name, prefixed with its parent when two rooms share a name. */
 export function roomLabels(rooms: RoomState[]): Record<string, string> {
   const base = (cwd: string) => cwd.replace(/\\/g, "/").replace(/\/+$/, "").split("/");
